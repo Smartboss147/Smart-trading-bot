@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Wallet as WalletIcon, ArrowUpRight, ArrowDownRight, RefreshCw, AlertTriangle } from 'lucide-react';
 import { Balance, LedgerEntry, DepositRecord, TradingMode } from '../types';
+import { safeFetchJson } from '../utils/api';
 
 interface WalletProps {
   tradingMode: TradingMode;
@@ -24,9 +25,9 @@ export const Wallet: React.FC<WalletProps> = ({ tradingMode, onNavigate }) => {
   const fetchWallet = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/wallet");
-      if (!res.ok) throw new Error("Failed to load wallet data");
-      const data = await res.json();
+      const res = await safeFetchJson("/api/wallet");
+      if (!res.ok) throw new Error(res.error || "Failed to load wallet data");
+      const data = res.data;
       setBalances(data.balances);
       setLedger(data.ledger);
       setDeposits(data.deposits);
@@ -44,13 +45,14 @@ export const Wallet: React.FC<WalletProps> = ({ tradingMode, onNavigate }) => {
 
   const handleDeposit = async () => {
     try {
-      const res = await fetch("/api/deposit", {
+      const res = await safeFetchJson("/api/deposit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ amount: Number(amount) })
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      
+      if (!res.ok) throw new Error(res.error || "Deposit failed");
+      const data = res.data;
       
       if (data.authorization_url) {
         window.location.href = data.authorization_url;
@@ -79,13 +81,12 @@ export const Wallet: React.FC<WalletProps> = ({ tradingMode, onNavigate }) => {
     
     try {
       setWithdrawLoading(true);
-      const res = await fetch("/api/withdraw", {
+      const res = await safeFetchJson("/api/withdraw", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ amount: Number(amount), authCode })
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      if (!res.ok) throw new Error(res.error || "Withdrawal failed");
       
       setAmount('');
       setShowWithdrawModal(false);

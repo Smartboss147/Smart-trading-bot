@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Market, RiskSettings, CurrencySymbol } from "../types";
 import { ArrowRightLeft, ShieldCheck, Zap, AlertTriangle, Check } from "lucide-react";
+import { safeFetchJson } from "../utils/api";
 
 interface TradePanelProps {
   markets: Market[];
@@ -68,7 +69,7 @@ export function TradePanel({ markets, riskSettings, onOrderExecuted }: TradePane
     setSubmitting(true);
     setShowConfirmModal(false);
     try {
-      const res = await fetch("/api/orders", {
+      const res = await safeFetchJson("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -82,11 +83,10 @@ export function TradePanel({ markets, riskSettings, onOrderExecuted }: TradePane
         })
       });
 
-      const data = await res.json();
       if (!res.ok) {
-        setErrorMessage(data.error || "Order execution failed");
+        setErrorMessage(res.error || "Order execution failed");
       } else {
-        setSuccessMessage(`Successfully executed ${side} order for ${currentMarket.symbol}! Order ID: ${data.order.id}`);
+        setSuccessMessage(`Successfully executed ${side} order for ${currentMarket.symbol}! Order ID: ${res.data.order.id}`);
         onOrderExecuted();
       }
     } catch (err: any) {

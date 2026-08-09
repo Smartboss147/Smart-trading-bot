@@ -3,55 +3,75 @@ export async function safeFetchJson<T = any>(
   options?: RequestInit
 ): Promise<{ ok: boolean; data?: T; error?: string; status?: number }> {
   try {
-    const res = await fetch(url, options);
+    // Ensure URL is absolute for better Safari compatibility and to avoid redirects
+    const fullUrl = url.startsWith("/") 
+      ? `${window.location.origin}${url}` 
+      : url;
+
+    // Safari can be picky about headers and methods
+    const fetchOptions: RequestInit = {
+      ...options,
+      headers: new Headers(options?.headers || {}),
+    };
+
+    const res = await fetch(fullUrl, fetchOptions);
     const contentType = res.headers.get("content-type") || "";
 
     let jsonBody: any = null;
+    let text = "";
 
-    if (contentType.includes("application/json")) {
+    try {
+      text = await res.text();
+    } catch (readErr: any) {
+      console.warn(`[API] Could not read response text for ${url}:`, readErr.message);
+    }
+
+    if (contentType.includes("application/json") && text) {
       try {
-        const text = await res.text();
-        try {
-          jsonBody = JSON.parse(text);
-        } catch (parseErr) {
-          console.error(`[API] Failed to parse JSON from ${url}:`, text.substring(0, 100));
-          return {
-            ok: false,
-            status: res.status,
-            error: `Invalid JSON response from server. Body: ${text.substring(0, 50)}...`
-          };
-        }
-      } catch (readErr: any) {
-        console.error(`[API] Failed to read response body from ${url}:`, readErr.message);
+        jsonBody = JSON.parse(text);
+      } catch (parseErr) {
+        console.error(`[API] JSON parse error for ${url}:`, text.substring(0, 100));
+        // Fallback: if it's not JSON but was supposed to be
       }
-    } else {
-      const text = await res.text();
-      if (text.trim().startsWith("<")) {
-        return {
-          ok: false,
-          status: res.status,
-          error: `Backend API endpoint returned HTML (${res.status}) instead of JSON. This usually means a server error or a missing API route on Vercel.`
-        };
-      }
-      if (text) {
+    } else if (text && !text.trim().startsWith("<")) {
+      // If it's plain text and not HTML
+      try {
+        jsonBody = JSON.parse(text);
+      } catch {
         jsonBody = { error: text };
       }
     }
 
     if (!res.ok) {
+      if (text.trim().startsWith("<!DOCTYPE html") || text.trim().startsWith("<html")) {
+        return {
+          ok: false,
+          status: res.status,
+          error: `Backend error (${res.status}): Server returned HTML. This may mean the API route is missing or crashed.`
+        };
+      }
+
       const errorMsg =
         jsonBody?.error ||
         jsonBody?.message ||
-        `Server error (${res.status} ${res.statusText})`;
+        jsonBody?.label ||
+        (text && text.length < 200 ? text : `Server error (${res.status} ${res.statusText})`);
+      
       return { ok: false, status: res.status, data: jsonBody, error: errorMsg };
     }
 
     return { ok: true, status: res.status, data: jsonBody };
   } catch (e: any) {
     console.error(`[API] Fetch error for ${url}:`, e.message);
+    // Specific check for Safari's "The string did not match the expected pattern"
+    let userFriendlyError = e.message;
+    if (e.message === "The string did not match the expected pattern") {
+      userFriendlyError = "Browser rejected the request format. This can happen in Safari due to invalid characters in keys or a blocked connection.";
+    }
+    
     return {
       ok: false,
-      error: e?.message || "Network request failed. Please check connection."
+      error: userFriendlyError || "Network request failed. Please check connection."
     };
   }
 }

@@ -84,7 +84,13 @@ export default function App() {
         "/api/trading/live-readiness"
       ];
 
-      const results = await Promise.all(endpoints.map(ep => safeFetchJson(ep)));
+      const results = [];
+      for (const ep of endpoints) {
+        console.log(`[App] Fetching ${ep}...`);
+        const res = await safeFetchJson(ep);
+        console.log(`[App] Fetched ${ep}:`, res.ok ? "OK" : "FAILED", res.error || "");
+        results.push(res);
+      }
 
       if (results[0].ok && results[0].data) setMarkets(results[0].data);
       if (results[1].ok && results[1].data) setOpportunities(results[1].data);
@@ -103,7 +109,7 @@ export default function App() {
 
   const handleToggleKillSwitch = async () => {
     const newActive = !riskSettings?.killSwitchActive;
-    await fetch("/api/kill-switch", {
+    await safeFetchJson("/api/kill-switch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ active: newActive })
@@ -112,7 +118,7 @@ export default function App() {
   };
 
   const handleUpdateRiskSettings = async (newSettings: Partial<RiskSettings>) => {
-    await fetch("/api/risk-settings", {
+    await safeFetchJson("/api/risk-settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(newSettings)
@@ -122,15 +128,14 @@ export default function App() {
 
   const handleToggleTradingMode = async (mode: "PAPER" | "LIVE", confirmed = false): Promise<boolean> => {
     try {
-      const res = await fetch("/api/trading-mode", {
+      const res = await safeFetchJson("/api/trading-mode", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode, confirmed })
       });
       if (!res.ok) {
-        const err = await res.json();
-        if (err.readiness) {
-          setLiveReadiness(err.readiness);
+        if (res.data?.readiness) {
+          setLiveReadiness(res.data.readiness);
         }
         return false;
       }

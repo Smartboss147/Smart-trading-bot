@@ -5,6 +5,7 @@ import path from "path";
 import fs from "fs";
 import { ApiClient, SpotApi } from "gate-api";
 import Paystack from "@paystack/paystack-sdk";
+import cors from "cors";
 
 // Initialize external providers (they will fail gracefully if keys are missing)
 let gateClient: ApiClient | null = null;
@@ -32,6 +33,11 @@ try {
 }
 
 const app = express();
+app.use(cors());
+app.use((req, res, next) => {
+  console.log(`[Server] ${req.method} ${req.url}`);
+  next();
+});
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
@@ -308,50 +314,67 @@ class GateWSManager {
 
   private handleMessage(data: any) {
     try {
+      if (!data) return;
       const msg = JSON.parse(data.toString());
       this.lastMessageTimestamp = Date.now();
 
-      if (msg.event === 'update') {
-        if (msg.channel === 'spot.tickers') {
-          this.updateTicker(msg.result);
-        } else if (msg.channel === 'spot.book_ticker') {
-          this.updateBookTicker(msg.result);
+      if (msg && msg.event === 'update') {
+        if (msg.channel === 'spot.tickers' && msg.result) {
+          const results = Array.isArray(msg.result) ? msg.result : [msg.result];
+          results.forEach(item => {
+            if (item) this.updateTicker(item);
+          });
+        } else if (msg.channel === 'spot.book_ticker' && msg.result) {
+          const results = Array.isArray(msg.result) ? msg.result : [msg.result];
+          results.forEach(item => {
+            if (item) this.updateBookTicker(item);
+          });
         }
       }
-    } catch (e) {
-      // Ignore parse errors
+    } catch (e: any) {
+      console.warn('[GateWS] Error handling message:', e.message);
     }
   }
 
   private updateTicker(result: any) {
-    const symbol = result.currency_pair.replace('_', '');
-    const current = marketsMap.get(symbol);
-    if (current) {
-      current.lastPrice = parseFloat(result.last);
-      current.volume24h = parseFloat(result.base_volume);
-      current.change24h = parseFloat(result.change_percentage);
-      current.exchange = "Gate.io";
-      current.status = "ACTIVE";
-      // Don't overwrite bid/ask if book_ticker is providing them (usually more frequent)
-      if (!current.bid || (Date.now() - (current.timestamp || 0) > 1000)) {
-        current.bid = parseFloat(result.highest_bid);
-        current.ask = parseFloat(result.lowest_ask);
-        current.timestamp = Date.now();
+    try {
+      if (!result || !result.currency_pair) return;
+      const symbol = result.currency_pair.replace('_', '');
+      const current = marketsMap.get(symbol);
+      if (current) {
+        current.lastPrice = parseFloat(result.last || "0");
+        current.volume24h = parseFloat(result.base_volume || "0");
+        current.change24h = parseFloat(result.change_percentage || "0");
+        current.exchange = "Gate.io";
+        current.status = "ACTIVE";
+        
+        if (!current.bid || (Date.now() - (current.timestamp || 0) > 1000)) {
+          current.bid = parseFloat(result.highest_bid || "0");
+          current.ask = parseFloat(result.lowest_ask || "0");
+          current.timestamp = Date.now();
+        }
       }
+    } catch (e) {
+      // Ignore ticker update errors
     }
   }
 
   private updateBookTicker(result: any) {
-    const symbol = result.s.replace('_', '');
-    const current = marketsMap.get(symbol);
-    if (current) {
-      current.bid = parseFloat(result.b);
-      current.ask = parseFloat(result.a);
-      current.bidQty = parseFloat(result.B);
-      current.askQty = parseFloat(result.A);
-      current.timestamp = Date.now();
-      current.exchange = "Gate.io";
-      current.status = "ACTIVE";
+    try {
+      if (!result || !result.s) return;
+      const symbol = result.s.replace('_', '');
+      const current = marketsMap.get(symbol);
+      if (current) {
+        current.bid = parseFloat(result.b || "0");
+        current.ask = parseFloat(result.a || "0");
+        current.bidQty = parseFloat(result.B || "0");
+        current.askQty = parseFloat(result.A || "0");
+        current.timestamp = Date.now();
+        current.exchange = "Gate.io";
+        current.status = "ACTIVE";
+      }
+    } catch (e) {
+      // Ignore book ticker update errors
     }
   }
 }
@@ -632,10 +655,18 @@ app.post("/api/exchanges", async (req, res) => {
   let status: "CONNECTED" | "ERROR" = "CONNECTED";
   let permissions = ["SPOT", "READ", "TRADE"];
 
+  // Normalize exchange name for matching
+  const isGate = /gate/i.test(selectedExchange);
+
   // Validate credentials with exchange if Gate.io
-  if (selectedExchange === "Gate.io" || selectedExchange === "Gate") {
+  if (isGate) {
     console.log(`[GateAuth] Attempting validation for ${apiKey.substring(0, 4)}...`);
     try {
+      // Basic sanity check on key format before calling API
+      if (apiKey.length < 16 || apiSecret.length < 16) {
+        throw new Error("API Key or Secret appears too short. Please ensure you copied the full strings from Gate.io.");
+      }
+
       const testClient = new ApiClient();
       // Ensure we use the correct production base path
       testClient.basePath = 'https://api.gateio.ws/api/v4';
@@ -644,7 +675,12 @@ app.post("/api/exchanges", async (req, res) => {
       
       console.log(`[GateAuth] Calling listSpotAccounts...`);
       // Perform real test request to verify credentials
-      const response = await testSpotApi.listSpotAccounts();
+      // We use a small timeout to avoid hanging
+      const response = await Promise.race([
+        testSpotApi.listSpotAccounts(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Authentication request timed out")), 8000))
+      ]) as any;
+
       console.log(`[GateAuth] Success: Received ${response?.body?.length || 0} accounts`);
       
       // Upgrade global spotApi with verified credentials
@@ -653,17 +689,11 @@ app.post("/api/exchanges", async (req, res) => {
       process.env.GATE_API_KEY = apiKey;
       process.env.GATE_API_SECRET = apiSecret;
       
-      // Re-connect WS with new credentials if needed (though public data doesn't need it)
-      // gateWSManager.connect(); 
     } catch (err: any) {
+      console.error("[GateAuth] Validation error type:", typeof err, "message:", err?.message);
       const errorDetail = err?.response?.body?.label || err?.response?.body?.message || err?.message || "Invalid API key or secret";
-      console.error("[GateAuth] Validation failed:", errorDetail);
+      console.error("[GateAuth] Validation failed detail:", errorDetail);
       
-      // Specific check for WebKit/Safari style error if it somehow comes from server
-      if (errorDetail.includes("string did not match the expected pattern")) {
-        console.error("[GateAuth] Detected pattern error. Check for hidden characters in keys.");
-      }
-
       return res.status(400).json({ 
         error: `Gate.io authentication failed: ${errorDetail}` 
       });
@@ -1470,6 +1500,20 @@ if (process.env.NODE_ENV !== "production") {
     res.sendFile(path.join(distPath, "index.html"));
   });
 }
+
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error("[Server Error]", err);
+  res.status(500).json({ error: "Internal Server Error", details: err.message });
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception thrown:", err);
+  // Optional: process.exit(1) if you want to fail fast
+});
 
 if (!process.env.VERCEL) {
   server.listen(PORT, "0.0.0.0", () => {
