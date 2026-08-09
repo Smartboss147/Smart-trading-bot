@@ -160,10 +160,13 @@ export default function App() {
   };
 
   const handleAddExchange = async (exchangeName: string, apiKey: string, apiSecret: string) => {
+    const cleanKey = apiKey.trim();
+    const cleanSecret = apiSecret.trim();
+
     const res = await safeFetchJson("/api/exchanges", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ exchangeName, apiKey, apiSecret })
+      body: JSON.stringify({ exchangeName, apiKey: cleanKey, apiSecret: cleanSecret })
     });
     if (!res.ok) {
       return { success: false, error: res.error || "Failed to connect exchange." };

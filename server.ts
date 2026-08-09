@@ -128,45 +128,20 @@ function writeDb(data: any) {
 let db = readDb();
 
 // 50+ Markets Initial State
-const symbolsList = [
-  "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", 
-  "LINKUSDT", "SUIUSDT", "NEARUSDT", "MATICUSDT", "DOTUSDT", "LTCUSDT", "UNIUSDT", "ATOMUSDT", 
-  "APTUSDT", "ARBUSDT", "OPUSDT", "ICPUSDT", "RENDERUSDT", "INJUSDT", "TIAUSDT", "SEIUSDT", 
-  "PEPEUSDT", "SHIBUSDT", "FLOKIUSDT", "WIFUSDT", "BONKUSDT", "FETUSDT", "AGIXUSDT", "OCEANUSDT", 
-  "GALAUSDT", "IMXUSDT", "MANAUSDT", "SANDUSDT", "AXSUSDT", "ENJUSDT", "CHZUSDT", "CRVUSDT", 
-  "AAVEUSDT", "MKRUSDT", "SNXUSDT", "COMPUSDT", "SUSHIUSDT", "1INCHUSDT", "DYDXUSDT", "GMXUSDT", 
-  "LDOUSDT", "XLMUSDT",
-  "BTCNGN", "ETHNGN", "USDTNGN"
-];
-
-const basePrices: Record<string, number> = {
-  BTCUSDT: 94000, ETHUSDT: 3200, BNBUSDT: 640, SOLUSDT: 180, XRPUSDT: 2.45,
-  DOGEUSDT: 0.22, ADAUSDT: 0.85, AVAXUSDT: 35, LINKUSDT: 18, SUIUSDT: 3.20,
-  NEARUSDT: 6.50, MATICUSDT: 0.55, DOTUSDT: 7.20, LTCUSDT: 95, UNIUSDT: 12.5,
-  ATOMUSDT: 7.8, APTUSDT: 11.2, ARBUSDT: 0.85, OPUSDT: 1.90, ICPUSDT: 11.5,
-  RENDERUSDT: 8.4, INJUSDT: 24, TIAUSDT: 5.8, SEIUSDT: 0.65, PEPEUSDT: 0.000021,
-  SHIBUSDT: 0.000024, FLOKIUSDT: 0.00018, WIFUSDT: 2.10, BONKUSDT: 0.000035,
-  FETUSDT: 1.45, AGIXUSDT: 0.85, OCEANUSDT: 0.95, GALAUSDT: 0.035, IMXUSDT: 1.80,
-  MANAUSDT: 0.42, SANDUSDT: 0.45, AXSUSDT: 6.2, ENJUSDT: 0.25, CHZUSDT: 0.085,
-  CRVUSDT: 0.45, AAVEUSDT: 180, MKRUSDT: 2100, SNXUSDT: 1.9, COMPUSDT: 65,
-  SUSHIUSDT: 1.1, "1INCHUSDT": 0.38, DYDXUSDT: 1.3, GMXUSDT: 32, LDOUSDT: 1.5, XLMUSDT: 0.35,
-  BTCNGN: 141000000, ETHNGN: 4800000, USDTNGN: 1500
-};
+const symbolsList = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ETHBTC", "BNBUSDT", "ADAUSDT", "XRPUSDT", "DOTUSDT", "DOGEUSDT", "LINKUSDT", "MATICUSDT", "UNIUSDT", "LTCUSDT", "BCHUSDT", "FILUSDT", "AAVEUSDT", "ATOMUSDT", "TRXUSDT", "VETUSDT", "ALGOUSDT", "EOSUSDT", "XTZUSDT", "XMRUSDT", "DASHUSDT", "ZECUSDT", "NEOUSDT"];
 
 const marketsMap = new Map<string, any>();
 
 symbolsList.forEach(symbol => {
-  const price = basePrices[symbol] || 100;
-  const spread = price * 0.0002;
-  const quoteAsset = symbol.endsWith("NGN") ? "NGN" : "USDT";
-  const baseAsset = symbol.replace("USDT", "").replace("NGN", "");
+  const quoteAsset = symbol.endsWith("BTC") ? "BTC" : "USDT";
+  const baseAsset = symbol.replace("USDT", "").replace("BTC", "");
   marketsMap.set(symbol, {
     symbol,
     baseAsset,
     quoteAsset,
-    bid: Number((price - spread / 2).toFixed(symbol.endsWith("NGN") ? 2 : 4)),
-    ask: Number((price + spread / 2).toFixed(symbol.endsWith("NGN") ? 2 : 4)),
-    lastPrice: price,
+    bid: 0,
+    ask: 0,
+    lastPrice: 0,
     bidQty: 0,
     askQty: 0,
     volume24h: 0,
@@ -198,6 +173,44 @@ class GateWSManager {
 
   constructor(symbols: string[]) {
     this.symbols = symbols.filter(s => s.endsWith("USDT") || s === "ETHBTC");
+    // Start a watchdog to ensure data is fresh, poll REST as fallback if WS fails
+    setInterval(() => this.watchdog(), 10000);
+  }
+
+  private async watchdog() {
+    const now = Date.now();
+    const stale = now - this.lastMessageTimestamp > 15000;
+    
+    if (stale) {
+      console.log(`[GateWS] Data is stale (${Math.floor((now - this.lastMessageTimestamp)/1000)}s), attempting REST poll fallback...`);
+      this.pollRest();
+      
+      // If disconnected, try to reconnect
+      if (this.status === 'DISCONNECTED') {
+        this.connect();
+      }
+    }
+  }
+
+  private async pollRest() {
+    try {
+      // Use public REST API for tickers as fallback
+      const response = await fetch('https://api.gateio.ws/api/v4/spot/tickers');
+      if (response.ok) {
+        const data: any = await response.json();
+        if (Array.isArray(data)) {
+          data.forEach((item: any) => {
+            const symbol = item.currency_pair.replace('_', '');
+            if (this.symbols.includes(symbol) || (symbol === "ETHBTC" && this.symbols.includes("ETHBTC"))) {
+              this.updateTicker(item);
+            }
+          });
+          this.lastMessageTimestamp = Date.now();
+        }
+      }
+    } catch (e: any) {
+      console.warn('[GateWS] REST poll fallback failed:', e.message);
+    }
   }
 
   public connect() {
@@ -474,7 +487,7 @@ setInterval(() => {
     type: "MARKET_UPDATE",
     timestamp: now,
     markets: Array.from(marketsMap.values()),
-    opportunities: mode === "LIVE" ? [] : liveOpportunities,
+    opportunities: liveOpportunities,
     systemHealth: {
       exchangeWs: gateWSManager.status,
       restApi: "CONNECTED",
@@ -588,9 +601,28 @@ app.get("/api/exchanges", (req, res) => {
   res.json(currentDb.exchangeAccounts);
 });
 
+app.get("/api/diagnostics", (req, res) => {
+  res.json({
+    env: {
+      NODE_ENV: process.env.NODE_ENV,
+      VERCEL: !!process.env.VERCEL,
+      GATE_KEY_SET: !!process.env.GATE_API_KEY,
+      GATE_SECRET_SET: !!process.env.GATE_API_SECRET,
+    },
+    gateWsStatus: gateWSManager.status,
+    gateWsLastMsg: gateWSManager.lastMessageTimestamp ? `${Math.floor((Date.now() - gateWSManager.lastMessageTimestamp)/1000)}s ago` : "never",
+    gateWsError: gateWSManager.lastError,
+    uptime: process.uptime()
+  });
+});
+
 app.post("/api/exchanges", async (req, res) => {
   const currentDb = readDb();
-  const { exchangeName, apiKey, apiSecret } = req.body;
+  let { exchangeName, apiKey, apiSecret } = req.body;
+
+  // Safe trim
+  apiKey = typeof apiKey === 'string' ? apiKey.trim() : apiKey;
+  apiSecret = typeof apiSecret === 'string' ? apiSecret.trim() : apiSecret;
 
   if (!apiKey || !apiSecret) {
     return res.status(400).json({ error: "API Key and API Secret are required." });
@@ -599,27 +631,41 @@ app.post("/api/exchanges", async (req, res) => {
   const selectedExchange = exchangeName || "Gate.io";
   let status: "CONNECTED" | "ERROR" = "CONNECTED";
   let permissions = ["SPOT", "READ", "TRADE"];
-  let lastError: string | undefined = undefined;
 
   // Validate credentials with exchange if Gate.io
   if (selectedExchange === "Gate.io" || selectedExchange === "Gate") {
+    console.log(`[GateAuth] Attempting validation for ${apiKey.substring(0, 4)}...`);
     try {
       const testClient = new ApiClient();
+      // Ensure we use the correct production base path
+      testClient.basePath = 'https://api.gateio.ws/api/v4';
       testClient.setApiKeySecret(apiKey, apiSecret);
       const testSpotApi = new SpotApi(testClient);
       
+      console.log(`[GateAuth] Calling listSpotAccounts...`);
       // Perform real test request to verify credentials
-      await testSpotApi.listSpotAccounts();
+      const response = await testSpotApi.listSpotAccounts();
+      console.log(`[GateAuth] Success: Received ${response?.body?.length || 0} accounts`);
       
       // Upgrade global spotApi with verified credentials
       gateClient = testClient;
       spotApi = testSpotApi;
       process.env.GATE_API_KEY = apiKey;
       process.env.GATE_API_SECRET = apiSecret;
+      
+      // Re-connect WS with new credentials if needed (though public data doesn't need it)
+      // gateWSManager.connect(); 
     } catch (err: any) {
-      console.error("Exchange credential validation failed:", err?.message || err);
+      const errorDetail = err?.response?.body?.label || err?.response?.body?.message || err?.message || "Invalid API key or secret";
+      console.error("[GateAuth] Validation failed:", errorDetail);
+      
+      // Specific check for WebKit/Safari style error if it somehow comes from server
+      if (errorDetail.includes("string did not match the expected pattern")) {
+        console.error("[GateAuth] Detected pattern error. Check for hidden characters in keys.");
+      }
+
       return res.status(400).json({ 
-        error: `Exchange authentication failed: ${err?.response?.body?.label || err?.message || "Invalid API key or secret"}` 
+        error: `Gate.io authentication failed: ${errorDetail}` 
       });
     }
   }
@@ -635,8 +681,7 @@ app.post("/api/exchanges", async (req, res) => {
     status,
     permissions,
     lastSync: Date.now(),
-    isPaper: false,
-    lastError
+    isPaper: false
   };
 
   if (existingIdx >= 0) {
