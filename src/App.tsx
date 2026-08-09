@@ -14,6 +14,7 @@ import { PortfolioView } from "./components/PortfolioView";
 import { Wallet } from "./components/Wallet";
 import { AlertTriangle } from "lucide-react";
 import { gateWs } from "./services/gateio";
+import { safeFetchJson } from "./utils/api";
 import { Market, ArbitrageOpportunity, Order, Trade, Balance, RiskSettings, ExchangeAccount, AuditLog, SystemHealth, LiveReadiness } from "./types";
 
 export default function App() {
@@ -104,35 +105,33 @@ export default function App() {
 
   const fetchData = async () => {
     try {
-      const [mRes, oRes, ordRes, trdRes, bRes, rRes, eRes, aRes, anRes, lrRes] = await Promise.all([
-        fetch("/api/markets").then(r => r.ok ? r.json() : Promise.reject(new Error("markets " + r.status))),
-        fetch("/api/opportunities").then(r => r.ok ? r.json() : Promise.reject(new Error("opportunities " + r.status))),
-        fetch("/api/orders").then(r => r.ok ? r.json() : Promise.reject(new Error("orders " + r.status))),
-        fetch("/api/trades").then(r => r.ok ? r.json() : Promise.reject(new Error("trades " + r.status))),
-        fetch("/api/balances").then(r => r.ok ? r.json() : Promise.reject(new Error("balances " + r.status))),
-        fetch("/api/risk-settings").then(r => r.ok ? r.json() : Promise.reject(new Error("risk-settings " + r.status))),
-        fetch("/api/exchanges").then(r => r.ok ? r.json() : Promise.reject(new Error("exchanges " + r.status))),
-        fetch("/api/audit-logs").then(r => r.ok ? r.json() : Promise.reject(new Error("audit-logs " + r.status))),
-        fetch("/api/analytics").then(r => r.ok ? r.json() : Promise.reject(new Error("analytics " + r.status))),
-        fetch("/api/trading/live-readiness").then(r => r.ok ? r.json() : Promise.reject(new Error("readiness " + r.status))),
-      ]);
+      const endpoints = [
+        "/api/markets",
+        "/api/opportunities",
+        "/api/orders",
+        "/api/trades",
+        "/api/balances",
+        "/api/risk-settings",
+        "/api/exchanges",
+        "/api/audit-logs",
+        "/api/analytics",
+        "/api/trading/live-readiness"
+      ];
 
-      setMarkets(mRes);
-      setOpportunities(oRes);
-      setOrders(ordRes);
-      setTrades(trdRes);
-      setBalances(bRes);
-      setRiskSettings(rRes);
-      setExchangeAccounts(eRes);
-      setAuditLogs(aRes);
-      setAnalytics(anRes);
-      setLiveReadiness(lrRes);
+      const results = await Promise.all(endpoints.map(ep => safeFetchJson(ep)));
+
+      if (results[0].ok && results[0].data) setMarkets(results[0].data);
+      if (results[1].ok && results[1].data) setOpportunities(results[1].data);
+      if (results[2].ok && results[2].data) setOrders(results[2].data);
+      if (results[3].ok && results[3].data) setTrades(results[3].data);
+      if (results[4].ok && results[4].data) setBalances(results[4].data);
+      if (results[5].ok && results[5].data) setRiskSettings(results[5].data);
+      if (results[6].ok && results[6].data) setExchangeAccounts(results[6].data);
+      if (results[7].ok && results[7].data) setAuditLogs(results[7].data);
+      if (results[8].ok && results[8].data) setAnalytics(results[8].data);
+      if (results[9].ok && results[9].data) setLiveReadiness(results[9].data);
     } catch (e: any) {
-      // Ignore transient network errors during preview startup or srcdoc rendering
-      const msg = e?.message || "";
-      if (!msg.includes("Load failed") && !msg.includes("expected pattern") && !msg.includes("Failed to fetch")) {
-        console.warn("API fetch delayed:", msg);
-      }
+      // Ignore transient network errors during preview startup
     }
   };
 
@@ -195,21 +194,16 @@ export default function App() {
   };
 
   const handleAddExchange = async (exchangeName: string, apiKey: string, apiSecret: string) => {
-    try {
-      const res = await fetch("/api/exchanges", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ exchangeName, apiKey, apiSecret })
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        return { success: false, error: err.error || "Failed to connect exchange." };
-      }
-      fetchData();
-      return { success: true };
-    } catch (e: any) {
-      return { success: false, error: e?.message || "Network error while connecting exchange." };
+    const res = await safeFetchJson("/api/exchanges", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ exchangeName, apiKey, apiSecret })
+    });
+    if (!res.ok) {
+      return { success: false, error: res.error || "Failed to connect exchange." };
     }
+    fetchData();
+    return { success: true };
   };
 
   const handleDeleteExchange = async (id: string) => {

@@ -38,11 +38,17 @@ const wss = new WebSocketServer({ server });
 app.use(express.json());
 
 const PORT = 3000;
-const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_DIR = process.env.VERCEL
+  ? path.join("/tmp", "data")
+  : path.join(process.cwd(), "data");
 const DB_FILE = path.join(DATA_DIR, "database.json");
 
 if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  } catch (e) {
+    console.warn("Could not create DATA_DIR:", e);
+  }
 }
 
 // Initial Database Structure
@@ -80,8 +86,25 @@ const defaultDb = {
 
 function readDb() {
   try {
+    if (!fs.existsSync(DATA_DIR)) {
+      try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
+    }
     if (!fs.existsSync(DB_FILE)) {
-      fs.writeFileSync(DB_FILE, JSON.stringify(defaultDb, null, 2));
+      const seedPath = path.join(process.cwd(), "data", "database.json");
+      if (fs.existsSync(seedPath) && seedPath !== DB_FILE) {
+        try {
+          fs.copyFileSync(seedPath, DB_FILE);
+          const data = fs.readFileSync(DB_FILE, "utf-8");
+          return JSON.parse(data);
+        } catch (e) {
+          console.warn("Failed to copy seed DB file:", e);
+        }
+      }
+      try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(defaultDb, null, 2));
+      } catch (e) {
+        console.warn("Failed to write default DB file:", e);
+      }
       return defaultDb;
     }
     const data = fs.readFileSync(DB_FILE, "utf-8");
@@ -92,7 +115,14 @@ function readDb() {
 }
 
 function writeDb(data: any) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.warn("Could not write to DB_FILE:", e);
+  }
 }
 
 let db = readDb();
@@ -1050,27 +1080,6 @@ app.get("/api/audit-logs", (req, res) => {
   res.json(currentDb.auditLogs);
 });
 
-// Vite middleware setup
-if (process.env.NODE_ENV !== "production") {
-  import("vite").then(async ({ createServer }) => {
-    const vite = await createServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  });
-} else {
-  const distPath = path.join(process.cwd(), "dist");
-  app.use(express.static(distPath));
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(distPath, "index.html"));
-  });
-}
-
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`ApexQuant Server running on http://localhost:${PORT}`);
-});
-
 app.get("/api/wallet", async (req, res) => {
   const currentDb = readDb();
   let liveBalances = currentDb.balances.filter((b: any) => b.mode === "LIVE");
@@ -1275,3 +1284,28 @@ app.post("/api/withdraw", (req, res) => {
 
   res.json({ success: true, withdrawal });
 });
+
+// Vite middleware setup & SPA fallback (AFTER all /api routes)
+if (process.env.NODE_ENV !== "production") {
+  import("vite").then(async ({ createServer }) => {
+    const vite = await createServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  });
+} else {
+  const distPath = path.join(process.cwd(), "dist");
+  app.use(express.static(distPath));
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
+}
+
+if (!process.env.VERCEL) {
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`ApexQuant Server running on http://localhost:${PORT}`);
+  });
+}
+
+export default app;
