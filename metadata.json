@@ -1,0 +1,6 @@
+{
+  "name": "ApexQuant - Real-Time Crypto Arbitrage Terminal",
+  "description": "Professional real-time multi-market cryptocurrency arbitrage trading terminal with live Binance feeds, cross-exchange & triangular arbitrage detection, risk management, paper and live execution.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

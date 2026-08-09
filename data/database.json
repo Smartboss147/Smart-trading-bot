@@ -1,0 +1,509 @@
+{
+  "riskSettings": {
+    "tradingMode": "PAPER",
+    "minNetEdgePercent": 0.15,
+    "maxTradeSizeUsd": 100,
+    "maxDailyLossUsd": 25,
+    "maxConcurrentTrades": 3,
+    "maxSlippagePercent": 0.08,
+    "maxDataAgeMs": 1000,
+    "minLiquidityUsd": 5000,
+    "killSwitchActive": false
+  },
+  "exchangeAccounts": [],
+  "balances": [
+    {
+      "asset": "NGN",
+      "exchange": "Binance",
+      "free": 2500000,
+      "locked": 50000,
+      "total": 2550000,
+      "usdValue": 1700
+    },
+    {
+      "asset": "USDT",
+      "exchange": "Binance",
+      "free": 12450.5,
+      "locked": 150,
+      "total": 12600.5,
+      "usdValue": 12600.5
+    },
+    {
+      "asset": "BTC",
+      "exchange": "Binance",
+      "free": 0.45,
+      "locked": 0.01,
+      "total": 0.46,
+      "usdValue": 43240
+    },
+    {
+      "asset": "ETH",
+      "exchange": "Binance",
+      "free": 3.2,
+      "locked": 0,
+      "total": 3.2,
+      "usdValue": 10240
+    },
+    {
+      "asset": "USDT",
+      "exchange": "Coinbase",
+      "free": 8900,
+      "locked": 0,
+      "total": 8900,
+      "usdValue": 8900
+    },
+    {
+      "asset": "BTC",
+      "exchange": "Coinbase",
+      "free": 0.2,
+      "locked": 0,
+      "total": 0.2,
+      "usdValue": 18800
+    },
+    {
+      "asset": "USDT",
+      "exchange": "Kraken",
+      "free": 5200,
+      "locked": 0,
+      "total": 5200,
+      "usdValue": 5200
+    },
+    {
+      "asset": "NGN",
+      "exchange": "Internal",
+      "free": 45000,
+      "locked": 5000,
+      "total": 50000,
+      "usdValue": 0,
+      "mode": "LIVE"
+    }
+  ],
+  "orders": [
+    {
+      "id": "ord-1786170005059-1",
+      "userId": "user-1",
+      "exchange": "Kraken",
+      "symbol": "NEARUSDT",
+      "strategy": "CROSS_EXCHANGE",
+      "side": "BUY",
+      "type": "MARKET",
+      "quantity": 0.01,
+      "price": 6.5779,
+      "filled": 0.01,
+      "remaining": 0,
+      "status": "FILLED",
+      "mode": "LIVE",
+      "createdAt": 1786170005059,
+      "updatedAt": 1786170005059
+    },
+    {
+      "id": "ord-1786169986075-1",
+      "userId": "user-1",
+      "exchange": "Binance",
+      "symbol": "ETHUSDT",
+      "strategy": "CROSS_EXCHANGE",
+      "side": "BUY",
+      "type": "MARKET",
+      "quantity": 0.01,
+      "price": 3238.1845,
+      "filled": 0.01,
+      "remaining": 0,
+      "status": "FILLED",
+      "mode": "LIVE",
+      "createdAt": 1786169986075,
+      "updatedAt": 1786169986075
+    },
+    {
+      "id": "ord-1786169915829-1",
+      "userId": "user-1",
+      "exchange": "Binance",
+      "symbol": "ETHUSDT",
+      "strategy": "CROSS_EXCHANGE",
+      "side": "BUY",
+      "type": "MARKET",
+      "quantity": 0.01,
+      "price": 3224.584,
+      "filled": 0.01,
+      "remaining": 0,
+      "status": "FILLED",
+      "mode": "LIVE",
+      "createdAt": 1786169915829,
+      "updatedAt": 1786169915829
+    },
+    {
+      "id": "ord-1786169876937-1",
+      "userId": "user-1",
+      "exchange": "Binance",
+      "symbol": "RENDERUSDT",
+      "strategy": "CROSS_EXCHANGE",
+      "side": "BUY",
+      "type": "MARKET",
+      "quantity": 0.01,
+      "price": 8.3997,
+      "filled": 0.01,
+      "remaining": 0,
+      "status": "FILLED",
+      "mode": "LIVE",
+      "createdAt": 1786169876937,
+      "updatedAt": 1786169876937
+    },
+    {
+      "id": "ord-1786169809820-1",
+      "userId": "user-1",
+      "exchange": "Kraken",
+      "symbol": "NEARUSDT",
+      "strategy": "CROSS_EXCHANGE",
+      "side": "BUY",
+      "type": "MARKET",
+      "quantity": 0.01,
+      "price": 6.5325,
+      "filled": 0.01,
+      "remaining": 0,
+      "status": "FILLED",
+      "mode": "LIVE",
+      "createdAt": 1786169809820,
+      "updatedAt": 1786169809820
+    }
+  ],
+  "trades": [
+    {
+      "id": "trd-1786170005059",
+      "userId": "user-1",
+      "exchange": "Kraken",
+      "symbol": "NEARUSDT",
+      "strategy": "CROSS_EXCHANGE",
+      "side": "BUY",
+      "orderId": "ord-1786170005059-1",
+      "quantity": 0.01,
+      "requestedPrice": 6.5779,
+      "averageFillPrice": 6.5779,
+      "fees": 0.074,
+      "slippage": 0.02,
+      "grossProfit": 0.325,
+      "netProfit": 0.25,
+      "status": "SUCCESS",
+      "mode": "LIVE",
+      "createdAt": 1786170005059,
+      "completedAt": 1786170005059
+    },
+    {
+      "id": "trd-1786169986075",
+      "userId": "user-1",
+      "exchange": "Binance",
+      "symbol": "ETHUSDT",
+      "strategy": "CROSS_EXCHANGE",
+      "side": "BUY",
+      "orderId": "ord-1786169986075-1",
+      "quantity": 0.01,
+      "requestedPrice": 3238.1845,
+      "averageFillPrice": 3238.1845,
+      "fees": 36.4296,
+      "slippage": 0.02,
+      "grossProfit": 157.859,
+      "netProfit": 121.43,
+      "status": "SUCCESS",
+      "mode": "LIVE",
+      "createdAt": 1786169986075,
+      "completedAt": 1786169986075
+    },
+    {
+      "id": "trd-1786169915829",
+      "userId": "user-1",
+      "exchange": "Binance",
+      "symbol": "ETHUSDT",
+      "strategy": "CROSS_EXCHANGE",
+      "side": "BUY",
+      "orderId": "ord-1786169915829-1",
+      "quantity": 0.01,
+      "requestedPrice": 3224.584,
+      "averageFillPrice": 3224.584,
+      "fees": 36.2766,
+      "slippage": 0.02,
+      "grossProfit": 157.196,
+      "netProfit": 120.92,
+      "status": "SUCCESS",
+      "mode": "LIVE",
+      "createdAt": 1786169915829,
+      "completedAt": 1786169915829
+    },
+    {
+      "id": "trd-1786169876937",
+      "userId": "user-1",
+      "exchange": "Binance",
+      "symbol": "RENDERUSDT",
+      "strategy": "CROSS_EXCHANGE",
+      "side": "BUY",
+      "orderId": "ord-1786169876937-1",
+      "quantity": 0.01,
+      "requestedPrice": 8.3997,
+      "averageFillPrice": 8.3997,
+      "fees": 0.0945,
+      "slippage": 0.02,
+      "grossProfit": 0.403,
+      "netProfit": 0.31,
+      "status": "SUCCESS",
+      "mode": "LIVE",
+      "createdAt": 1786169876937,
+      "completedAt": 1786169876937
+    },
+    {
+      "id": "trd-1786169809820",
+      "userId": "user-1",
+      "exchange": "Kraken",
+      "symbol": "NEARUSDT",
+      "strategy": "CROSS_EXCHANGE",
+      "side": "BUY",
+      "orderId": "ord-1786169809820-1",
+      "quantity": 0.01,
+      "requestedPrice": 6.5325,
+      "averageFillPrice": 6.5325,
+      "fees": 0.0735,
+      "slippage": 0.02,
+      "grossProfit": 0.312,
+      "netProfit": 0.24,
+      "status": "SUCCESS",
+      "mode": "LIVE",
+      "createdAt": 1786169809820,
+      "completedAt": 1786169809820
+    }
+  ],
+  "auditLogs": [
+    {
+      "id": "log-1786257815758",
+      "action": "TRADING_MODE_CHANGED",
+      "category": "RISK",
+      "details": "Trading mode switched to PAPER.",
+      "timestamp": 1786257815758,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786257313508",
+      "action": "TRADING_MODE_CHANGED",
+      "category": "RISK",
+      "details": "Trading mode switched to LIVE.",
+      "timestamp": 1786257313508,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786257171357",
+      "action": "TRADING_MODE_CHANGED",
+      "category": "RISK",
+      "details": "Trading mode switched to LIVE.",
+      "timestamp": 1786257171357,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786257169603",
+      "action": "TRADING_MODE_CHANGED",
+      "category": "RISK",
+      "details": "Trading mode switched to PAPER.",
+      "timestamp": 1786257169603,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786256941332",
+      "action": "TRADING_MODE_CHANGED",
+      "category": "RISK",
+      "details": "Trading mode switched to LIVE.",
+      "timestamp": 1786256941332,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786256484469",
+      "action": "TRADING_MODE_CHANGED",
+      "category": "RISK",
+      "details": "Trading mode switched to LIVE.",
+      "timestamp": 1786256484469,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786256479240",
+      "action": "TRADING_MODE_CHANGED",
+      "category": "RISK",
+      "details": "Trading mode switched to PAPER.",
+      "timestamp": 1786256479240,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786256476550",
+      "action": "TRADING_MODE_CHANGED",
+      "category": "RISK",
+      "details": "Trading mode switched to LIVE.",
+      "timestamp": 1786256476551,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786256471176",
+      "action": "TRADING_MODE_CHANGED",
+      "category": "RISK",
+      "details": "Trading mode switched to LIVE.",
+      "timestamp": 1786256471176,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786170954133",
+      "action": "WITHDRAWAL_CREATED",
+      "category": "SYSTEM",
+      "details": "Withdrawal initiated for ₦5000",
+      "timestamp": 1786170954133,
+      "user": "system"
+    },
+    {
+      "id": "log-1786170924526",
+      "action": "DEPOSIT_VERIFIED",
+      "category": "SYSTEM",
+      "details": "Verified NGN deposit of ₦50000",
+      "timestamp": 1786170924526,
+      "user": "system"
+    },
+    {
+      "id": "log-1786170721563",
+      "action": "DEPOSIT_VERIFIED",
+      "category": "SYSTEM",
+      "details": "Verified NGN deposit of ₦50000",
+      "timestamp": 1786170721563,
+      "user": "system"
+    },
+    {
+      "id": "log-1786170005059",
+      "action": "ORDER_EXECUTED",
+      "category": "TRADE",
+      "details": "Executed LIVE arbitrage for NEARUSDT on Kraken. Verified edge. Amount: ₦98.669",
+      "timestamp": 1786170005059,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786169986075",
+      "action": "ORDER_EXECUTED",
+      "category": "TRADE",
+      "details": "Executed LIVE arbitrage for ETHUSDT on Binance. Verified edge. Amount: ₦48,572.767",
+      "timestamp": 1786169986075,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786169915829",
+      "action": "ORDER_EXECUTED",
+      "category": "TRADE",
+      "details": "Executed LIVE arbitrage for ETHUSDT on Binance. Verified edge. Amount: ₦48,368.76",
+      "timestamp": 1786169915829,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786169876937",
+      "action": "ORDER_EXECUTED",
+      "category": "TRADE",
+      "details": "Executed LIVE arbitrage for RENDERUSDT on Binance. Verified edge. Amount: ₦125.995",
+      "timestamp": 1786169876937,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786169809820",
+      "action": "ORDER_EXECUTED",
+      "category": "TRADE",
+      "details": "Executed LIVE arbitrage for NEARUSDT on Kraken. Verified edge. Amount: ₦97.988",
+      "timestamp": 1786169809820,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786169764804",
+      "action": "TRADING_MODE_CHANGED",
+      "category": "RISK",
+      "details": "Trading mode switched to LIVE.",
+      "timestamp": 1786169764804,
+      "user": "admin"
+    },
+    {
+      "id": "log-1",
+      "action": "SYSTEM_STARTED",
+      "category": "SYSTEM",
+      "details": "ApexQuant arbitrage trading terminal initialized successfully.",
+      "timestamp": 1786168979539,
+      "user": "system"
+    },
+    {
+      "id": "log-2",
+      "action": "EXCHANGE_CONNECTED",
+      "category": "EXCHANGE",
+      "details": "Binance WebSocket feed connected successfully.",
+      "timestamp": 1786169029539,
+      "user": "admin"
+    }
+  ],
+  "deposits": [
+    {
+      "id": "dep-1786170915245",
+      "userId": "user-1",
+      "amount": 50000,
+      "currency": "NGN",
+      "paymentMethod": "PAYSTACK",
+      "reference": "dep-1786170915245",
+      "status": "SUCCESSFUL",
+      "mode": "LIVE",
+      "createdAt": 1786170915245,
+      "updatedAt": 1786170924526,
+      "providerReference": "123456"
+    },
+    {
+      "id": "dep-1786170641678",
+      "userId": "user-1",
+      "amount": 50000,
+      "currency": "NGN",
+      "paymentMethod": "PAYSTACK",
+      "reference": "dep-1786170641678",
+      "status": "SUCCESSFUL",
+      "mode": "LIVE",
+      "createdAt": 1786170641678,
+      "updatedAt": 1786170721563,
+      "providerReference": "123456"
+    }
+  ],
+  "ledger": [
+    {
+      "id": "wd-1786170954133",
+      "userId": "user-1",
+      "accountMode": "LIVE",
+      "transactionType": "WITHDRAWAL",
+      "currency": "NGN",
+      "amount": 5000,
+      "direction": "DEBIT",
+      "balanceBefore": 50000,
+      "balanceAfter": 45000,
+      "reference": "wd-1786170954133",
+      "status": "PROCESSING",
+      "createdAt": 1786170954133,
+      "updatedAt": 1786170954133
+    },
+    {
+      "id": "led-1786170924526",
+      "userId": "user-1",
+      "accountMode": "LIVE",
+      "transactionType": "DEPOSIT",
+      "currency": "NGN",
+      "amount": 50000,
+      "direction": "CREDIT",
+      "balanceBefore": 0,
+      "balanceAfter": 50000,
+      "reference": "dep-1786170915245",
+      "providerReference": "123456",
+      "status": "SUCCESSFUL",
+      "createdAt": 1786170924526,
+      "updatedAt": 1786170924526
+    },
+    {
+      "id": "led-1786170721563",
+      "userId": "user-1",
+      "accountMode": "LIVE",
+      "transactionType": "DEPOSIT",
+      "currency": "NGN",
+      "amount": 50000,
+      "direction": "CREDIT",
+      "balanceBefore": 0,
+      "balanceAfter": 50000,
+      "reference": "dep-1786170641678",
+      "providerReference": "123456",
+      "status": "SUCCESSFUL",
+      "createdAt": 1786170721563,
+      "updatedAt": 1786170721563
+    }
+  ]
+}
