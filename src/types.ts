@@ -199,4 +199,5 @@ export interface LiveReadiness {
   riskManagementConfigured: boolean;
   killSwitchAvailable: boolean;
   reason: string | null;
+  marketDataDetail?: string;
 }

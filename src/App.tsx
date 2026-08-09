@@ -64,42 +64,8 @@ export default function App() {
       console.warn("Failed to initialize WebSocket:", err?.message);
     }
 
-    // Connect Gate.io real-time WebSocket client
-    try {
-      gateWs.connect();
-      gateWs.subscribeTickers(["BTC_USDT", "ETH_USDT", "SOL_USDT"], (ticker) => {
-        if (!ticker || !ticker.currency_pair) return;
-        setMarkets((prevMarkets) =>
-          prevMarkets.map((m) => {
-            if (m.symbol === ticker.currency_pair || m.symbol.replace("/", "_") === ticker.currency_pair) {
-              const last = parseFloat(ticker.last) || m.lastPrice;
-              const ask = parseFloat(ticker.lowest_ask) || m.ask;
-              const bid = parseFloat(ticker.highest_bid) || m.bid;
-              const change = parseFloat(ticker.change_percentage) || m.change24h;
-              const vol = parseFloat(ticker.base_volume) || m.volume24h;
-              return {
-                ...m,
-                lastPrice: last,
-                ask: ask,
-                bid: bid,
-                spread: Math.abs(ask - bid),
-                spreadPercent: ask > 0 ? (Math.abs(ask - bid) / ask) * 100 : 0,
-                change24h: change,
-                volume24h: vol,
-                timestamp: Date.now(),
-              };
-            }
-            return m;
-          })
-        );
-      });
-    } catch (gateErr: any) {
-      console.warn("Gate WS init error:", gateErr?.message);
-    }
-
     return () => {
       if (ws) ws.close();
-      gateWs.disconnect();
     };
   }, []);
 
@@ -304,6 +270,7 @@ export default function App() {
           <RiskAndStrategy
             riskSettings={riskSettings}
             liveReadiness={liveReadiness}
+            systemHealth={systemHealth}
             onUpdateRiskSettings={handleUpdateRiskSettings}
             onToggleTradingMode={handleToggleTradingMode}
             onNavigateToExchanges={() => setActiveTab("exchanges")}

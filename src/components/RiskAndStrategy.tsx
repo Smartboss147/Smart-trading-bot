@@ -1,10 +1,12 @@
 import React, { useState } from "react";
 import { Settings, ShieldAlert, Check, X, AlertCircle, ArrowRight, Key } from "lucide-react";
-import { RiskSettings, LiveReadiness } from "../types";
+import { RiskSettings, LiveReadiness, SystemHealth } from "../types";
+import { Activity, Zap, Wifi, WifiOff } from "lucide-react";
 
 interface RiskAndStrategyProps {
   riskSettings: RiskSettings | null;
   liveReadiness: LiveReadiness | null;
+  systemHealth: SystemHealth | null;
   onUpdateRiskSettings: (newSettings: Partial<RiskSettings>) => void;
   onToggleTradingMode: (mode: "PAPER" | "LIVE", confirmed?: boolean) => Promise<boolean>;
   onNavigateToExchanges?: () => void;
@@ -13,6 +15,7 @@ interface RiskAndStrategyProps {
 export function RiskAndStrategy({ 
   riskSettings, 
   liveReadiness, 
+  systemHealth,
   onUpdateRiskSettings, 
   onToggleTradingMode,
   onNavigateToExchanges 
@@ -71,6 +74,51 @@ export function RiskAndStrategy({
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
+      {/* Real-time Market Connectivity Status */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className={`p-4 rounded-lg border flex items-center gap-3 ${
+          systemHealth?.exchangeWs === 'CONNECTED' 
+            ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" 
+            : "bg-rose-500/10 border-rose-500/30 text-rose-400"
+        }`}>
+          <div className="p-2 rounded bg-white/5">
+            {systemHealth?.exchangeWs === 'CONNECTED' ? <Wifi className="w-5 h-5" /> : <WifiOff className="w-5 h-5" />}
+          </div>
+          <div>
+            <div className="text-[10px] uppercase font-bold tracking-wider opacity-60">Gate.io WebSocket</div>
+            <div className="text-sm font-bold">{systemHealth?.exchangeWs || 'DISCONNECTED'}</div>
+          </div>
+        </div>
+
+        <div className={`p-4 rounded-lg border flex items-center gap-3 ${
+          liveReadiness?.marketDataAvailable 
+            ? "bg-cyan-500/10 border-cyan-500/30 text-cyan-400" 
+            : "bg-amber-500/10 border-amber-500/30 text-amber-400"
+        }`}>
+          <div className="p-2 rounded bg-white/5">
+            <Activity className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="text-[10px] uppercase font-bold tracking-wider opacity-60">Market Data Feed</div>
+            <div className="text-sm font-bold">{liveReadiness?.marketDataAvailable ? 'LIVE' : 'OFFLINE / STALE'}</div>
+          </div>
+        </div>
+
+        <div className="p-4 rounded-lg border bg-slate-900 border-slate-800 flex items-center gap-3 text-slate-300">
+          <div className="p-2 rounded bg-white/5">
+            <Zap className="w-5 h-5 text-amber-400" />
+          </div>
+          <div>
+            <div className="text-[10px] uppercase font-bold tracking-wider opacity-60">Last Update</div>
+            <div className="text-sm font-bold">
+              {systemHealth?.dataLatencyMs !== undefined 
+                ? `${Math.max(0, Math.floor(systemHealth.dataLatencyMs / 1000))}s ago` 
+                : '---'}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Execution Trading Mode & Readiness */}
       <div className="bg-slate-900 border border-slate-800 p-6 rounded-lg space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

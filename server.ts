@@ -167,72 +167,184 @@ symbolsList.forEach(symbol => {
     bid: Number((price - spread / 2).toFixed(symbol.endsWith("NGN") ? 2 : 4)),
     ask: Number((price + spread / 2).toFixed(symbol.endsWith("NGN") ? 2 : 4)),
     lastPrice: price,
-    bidQty: Number((Math.random() * 10 + 1).toFixed(2)),
-    askQty: Number((Math.random() * 10 + 1).toFixed(2)),
-    volume24h: Math.floor(Math.random() * 50000000 + 1000000),
-    change24h: Number((Math.random() * 8 - 3.5).toFixed(2)),
-    spread: Number(spread.toFixed(2)),
-    spreadPercent: 0.02,
-    latencyMs: Math.floor(Math.random() * 25 + 15),
-    dataAgeMs: 12,
-    timestamp: Date.now(),
-    exchange: "Binance",
-    status: "ACTIVE"
+    bidQty: 0,
+    askQty: 0,
+    volume24h: 0,
+    change24h: 0,
+    spread: 0,
+    spreadPercent: 0,
+    latencyMs: 0,
+    dataAgeMs: 0,
+    timestamp: 0,
+    exchange: "Gate.io",
+    status: "OFFLINE"
   });
 });
 
 let liveOpportunities: any[] = [];
 let systemLatency = 24;
 
-const gateWs = new WebSocket('wss://api.gateio.ws/ws/v4/');
-gateWs.on('open', () => {
-  console.log("Connected to Gate.io WS for market data");
-  // Subscribe to all USDT pairs from symbolsList
-  const payloads = symbolsList
-    .filter(s => s.endsWith("USDT"))
-    .map(s => s.replace("USDT", "_USDT"));
-  
-  if (payloads.length > 0) {
-    gateWs.send(JSON.stringify({
+// Robust Gate.io Market Data WebSocket Manager
+class GateWSManager {
+  private ws: any = null;
+  private url = 'wss://api.gateio.ws/ws/v4/';
+  private symbols: string[];
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 10;
+  private pingInterval: NodeJS.Timeout | null = null;
+  public status: 'CONNECTED' | 'DISCONNECTED' | 'CONNECTING' = 'DISCONNECTED';
+  public lastMessageTimestamp = 0;
+  public lastError: string | null = null;
+
+  constructor(symbols: string[]) {
+    this.symbols = symbols.filter(s => s.endsWith("USDT") || s === "ETHBTC");
+  }
+
+  public connect() {
+    if (this.status === 'CONNECTING' || this.status === 'CONNECTED') return;
+
+    this.status = 'CONNECTING';
+    console.log(`[GateWS] Connecting to ${this.url}...`);
+    
+    try {
+      this.ws = new WebSocket(this.url);
+
+      this.ws.on('open', () => {
+        this.status = 'CONNECTED';
+        this.reconnectAttempts = 0;
+        this.lastError = null;
+        console.log('[GateWS] Connected successfully');
+        this.subscribe();
+        this.startPing();
+      });
+
+      this.ws.on('message', (data: any) => {
+        this.handleMessage(data);
+      });
+
+      this.ws.on('close', () => {
+        this.status = 'DISCONNECTED';
+        this.stopPing();
+        this.handleReconnect();
+      });
+
+      this.ws.on('error', (err: any) => {
+        this.lastError = err.message || 'Unknown WebSocket error';
+        console.error('[GateWS] Error:', this.lastError);
+      });
+    } catch (e: any) {
+      this.status = 'DISCONNECTED';
+      this.lastError = e.message;
+      this.handleReconnect();
+    }
+  }
+
+  private handleReconnect() {
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
+      console.log(`[GateWS] Reconnecting in ${delay}ms (Attempt ${this.reconnectAttempts})...`);
+      setTimeout(() => this.connect(), delay);
+    } else {
+      console.error('[GateWS] Max reconnect attempts reached');
+    }
+  }
+
+  private startPing() {
+    this.pingInterval = setInterval(() => {
+      if (this.ws && this.status === 'CONNECTED') {
+        this.ws.send(JSON.stringify({
+          time: Math.floor(Date.now() / 1000),
+          channel: 'spot.ping'
+        }));
+      }
+    }, 15000);
+  }
+
+  private stopPing() {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+  }
+
+  private subscribe() {
+    if (!this.ws || this.status !== 'CONNECTED') return;
+
+    const payloads = this.symbols.map(s => {
+      if (s === "ETHBTC") return "ETH_BTC";
+      return s.replace("USDT", "_USDT");
+    });
+
+    // Subscribe to tickers for general market info
+    this.ws.send(JSON.stringify({
       time: Math.floor(Date.now() / 1000),
       channel: 'spot.tickers',
       event: 'subscribe',
       payload: payloads
     }));
-  }
-});
 
-gateWs.on('message', (data: any) => {
-  try {
-    const msg = JSON.parse(data.toString());
-    if (msg.event === 'update' && msg.channel === 'spot.tickers') {
-      const result = msg.result;
-      const symbol = result.currency_pair.replace('_', '');
-      const current = marketsMap.get(symbol);
-      if (current) {
-        const last = parseFloat(result.last);
-        const bid = parseFloat(result.highest_bid);
-        const ask = parseFloat(result.lowest_ask);
-        current.lastPrice = last;
-        current.bid = bid;
-        current.ask = ask;
-        current.volume24h = parseFloat(result.base_volume);
-        current.change24h = parseFloat(result.change_percentage);
-        current.spread = ask - bid;
-        current.spreadPercent = (current.spread / last) * 100;
+    // Subscribe to book_ticker for real-time best bid/ask (crucial for arb)
+    this.ws.send(JSON.stringify({
+      time: Math.floor(Date.now() / 1000),
+      channel: 'spot.book_ticker',
+      event: 'subscribe',
+      payload: payloads
+    }));
+  }
+
+  private handleMessage(data: any) {
+    try {
+      const msg = JSON.parse(data.toString());
+      this.lastMessageTimestamp = Date.now();
+
+      if (msg.event === 'update') {
+        if (msg.channel === 'spot.tickers') {
+          this.updateTicker(msg.result);
+        } else if (msg.channel === 'spot.book_ticker') {
+          this.updateBookTicker(msg.result);
+        }
+      }
+    } catch (e) {
+      // Ignore parse errors
+    }
+  }
+
+  private updateTicker(result: any) {
+    const symbol = result.currency_pair.replace('_', '');
+    const current = marketsMap.get(symbol);
+    if (current) {
+      current.lastPrice = parseFloat(result.last);
+      current.volume24h = parseFloat(result.base_volume);
+      current.change24h = parseFloat(result.change_percentage);
+      current.exchange = "Gate.io";
+      current.status = "ACTIVE";
+      // Don't overwrite bid/ask if book_ticker is providing them (usually more frequent)
+      if (!current.bid || (Date.now() - (current.timestamp || 0) > 1000)) {
+        current.bid = parseFloat(result.highest_bid);
+        current.ask = parseFloat(result.lowest_ask);
         current.timestamp = Date.now();
-        current.exchange = "Gate.io";
-        current.dataAgeMs = 0;
       }
     }
-  } catch (e) {
-    // Ignore WS parse errors
   }
-});
 
-gateWs.on('error', (err: any) => {
-  console.error("Gate.io WS error:", err);
-});
+  private updateBookTicker(result: any) {
+    const symbol = result.s.replace('_', '');
+    const current = marketsMap.get(symbol);
+    if (current) {
+      current.bid = parseFloat(result.b);
+      current.ask = parseFloat(result.a);
+      current.bidQty = parseFloat(result.B);
+      current.askQty = parseFloat(result.A);
+      current.timestamp = Date.now();
+      current.exchange = "Gate.io";
+      current.status = "ACTIVE";
+    }
+  }
+}
+
+const gateWSManager = new GateWSManager(symbolsList);
+gateWSManager.connect();
 
 // Real Gate.io Market Data Triangular Arbitrage Calculation Engine
 function calculateRealArbitrage() {
@@ -364,14 +476,14 @@ setInterval(() => {
     markets: Array.from(marketsMap.values()),
     opportunities: mode === "LIVE" ? [] : liveOpportunities,
     systemHealth: {
-      exchangeWs: "CONNECTED",
+      exchangeWs: gateWSManager.status,
       restApi: "CONNECTED",
       database: "HEALTHY",
-      marketData: "LIVE",
-      dataLatencyMs: systemLatency,
+      marketData: (Date.now() - gateWSManager.lastMessageTimestamp < 10000) ? "LIVE" : "STALE",
+      dataLatencyMs: Date.now() - gateWSManager.lastMessageTimestamp,
       executionEngine: db.riskSettings.killSwitchActive ? "STOPPED" : "READY",
       riskEngine: db.riskSettings.killSwitchActive ? "TRIGGERED" : "ACTIVE",
-      activeStrategiesCount: 2,
+      activeStrategiesCount: gateWSManager.status === 'CONNECTED' ? 3 : 0,
       uptimeSeconds: Math.floor(process.uptime())
     }
   });
@@ -603,9 +715,20 @@ function calculateLiveReadiness() {
   
   const now = Date.now();
   let marketDataAvailable = false;
-  if (marketsMap.size > 0) {
-    const latestAge = Math.min(...Array.from(marketsMap.values()).map((m: any) => now - (m.timestamp || 0)));
-    marketDataAvailable = latestAge < 10000;
+  let marketDataDetail = "";
+  
+  const wsConnected = gateWSManager.status === 'CONNECTED';
+  const lastMsgAge = now - gateWSManager.lastMessageTimestamp;
+  const dataStale = lastMsgAge > 10000;
+
+  if (wsConnected && !dataStale) {
+    marketDataAvailable = true;
+  } else {
+    if (!wsConnected) {
+      marketDataDetail = `WebSocket disconnected (${gateWSManager.status}). ${gateWSManager.lastError || ''}`;
+    } else if (dataStale) {
+      marketDataDetail = `Market data is stale. Last message received ${Math.floor(lastMsgAge / 1000)}s ago.`;
+    }
   }
 
   const accountAccessible = Boolean(connectedAccount && (spotApi || process.env.GATE_API_KEY));
@@ -621,7 +744,7 @@ function calculateLiveReadiness() {
   } else if (!tradingPermission) {
     reason = "Connected exchange account lacks SPOT or TRADE order execution permission.";
   } else if (!marketDataAvailable) {
-    reason = "Live market data feed is offline or stale (>10s latency).";
+    reason = `Live market data feed is offline or stale. ${marketDataDetail}`;
   } else if (!riskManagementConfigured) {
     reason = "Risk settings are unconfigured or maximum trade size is zero.";
   } else if (!killSwitchAvailable) {
@@ -639,7 +762,8 @@ function calculateLiveReadiness() {
     tradingPermission,
     riskManagementConfigured,
     killSwitchAvailable,
-    reason: ready ? null : reason
+    reason: ready ? null : reason,
+    marketDataDetail
   };
 }
 
