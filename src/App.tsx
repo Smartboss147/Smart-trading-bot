@@ -12,10 +12,79 @@ import { IpadMonitorMode } from "./components/IpadMonitorMode";
 import { TradePanel } from "./components/TradePanel";
 import { PortfolioView } from "./components/PortfolioView";
 import { Wallet } from "./components/Wallet";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, RefreshCw, Home } from "lucide-react";
 import { gateWs } from "./services/gateio";
 import { safeFetchJson } from "./utils/api";
 import { Market, ArbitrageOpportunity, Order, Trade, Balance, RiskSettings, ExchangeAccount, AuditLog, SystemHealth, LiveReadiness } from "./types";
+
+// --- ErrorBoundary Component ---
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = {
+      hasError: false,
+      error: null
+    };
+  }
+
+  public static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  public componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("[Uncaught Error]:", error, errorInfo);
+  }
+
+  private handleReset = () => {
+    window.localStorage.clear();
+    window.location.reload();
+  };
+
+  public render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6 font-sans">
+          <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-xl p-8 text-center shadow-2xl">
+            <div className="w-16 h-16 bg-rose-500/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-rose-500/20">
+              <AlertTriangle className="w-8 h-8 text-rose-500" />
+            </div>
+            <h1 className="text-xl font-bold mb-2">Something went wrong</h1>
+            <p className="text-slate-400 text-sm mb-8">
+              The application encountered an unexpected error. This usually happens due to a temporary connection issue.
+            </p>
+            <div className="space-y-3">
+              <button
+                onClick={() => window.location.reload()}
+                className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg flex items-center justify-center gap-2 transition-all shadow-lg shadow-cyan-600/20"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Retry Loading
+              </button>
+              <button
+                onClick={this.handleReset}
+                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-lg flex items-center justify-center gap-2 transition-all"
+              >
+                <Home className="w-4 h-4" />
+                Reset & Go Home
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+// --- End ErrorBoundary ---
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -230,116 +299,120 @@ export default function App() {
 
   if (activeTab === "ipad") {
     return (
-      <IpadMonitorMode
-        markets={markets}
-        opportunities={opportunities}
-        systemHealth={systemHealth}
-        onExit={() => setActiveTab("dashboard")}
-      />
+      <ErrorBoundary>
+        <IpadMonitorMode
+          markets={markets || []}
+          opportunities={opportunities || []}
+          systemHealth={systemHealth}
+          onExit={() => setActiveTab("dashboard")}
+        />
+      </ErrorBoundary>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-      <Navbar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        riskSettings={riskSettings}
-        systemHealth={systemHealth}
-        onToggleKillSwitch={handleToggleKillSwitch}
-        totalBalanceUsd={totalBalanceUsd}
-      />
+    <ErrorBoundary>
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+        <Navbar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          riskSettings={riskSettings}
+          systemHealth={systemHealth}
+          onToggleKillSwitch={handleToggleKillSwitch}
+          totalBalanceUsd={totalBalanceUsd}
+        />
 
-      {riskSettings?.tradingMode === "LIVE" && (
-        <div className="bg-amber-500 text-amber-950 px-4 py-2 text-center text-sm font-bold flex items-center justify-center gap-2 tracking-wide shadow-md shadow-amber-500/20 z-40 relative">
-          <AlertTriangle className="w-5 h-5" />
-          REAL MONEY MODE — Your connected account contains real funds. Orders may result in real financial transactions.
-        </div>
-      )}
+        {riskSettings?.tradingMode === "LIVE" && (
+          <div className="bg-amber-500 text-amber-950 px-4 py-2 text-center text-sm font-bold flex items-center justify-center gap-2 tracking-wide shadow-md shadow-amber-500/20 z-40 relative">
+            <AlertTriangle className="w-5 h-5" />
+            REAL MONEY MODE — Your connected account contains real funds. Orders may result in real financial transactions.
+          </div>
+        )}
 
-      <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 py-6">
-        {activeTab === "dashboard" && (
-          <DashboardOverview
-            balances={balances}
-            opportunities={opportunities}
-            systemHealth={systemHealth}
-            analytics={analytics}
-            onSelectTab={setActiveTab}
-          />
-        )}
-        {activeTab === "trade" && (
-          <TradePanel
-            markets={markets}
-            riskSettings={riskSettings}
-            onOrderExecuted={fetchData}
-          />
-        )}
-        {activeTab === "portfolio" && (
-          <PortfolioView
-            balances={balances}
-            trades={trades}
-          />
-        )}
-        {activeTab === "wallet" && (
-          <Wallet
-            tradingMode={riskSettings?.tradingMode || "PAPER"}
-            onNavigate={setActiveTab}
-          />
-        )}
-        {activeTab === "scanner" && (
-          <MarketScanner
-            markets={markets}
-            onSelectMarket={(m) => {
-              setSelectedMarket(m);
-              setActiveTab("terminal");
-            }}
-          />
-        )}
-        {activeTab === "arbitrage" && (
-          <ArbitrageScanner
-            opportunities={opportunities}
-            riskSettings={riskSettings}
-            onExecuteOpportunity={handleExecuteOpportunity}
-          />
-        )}
-        {activeTab === "terminal" && (
-          <TradingTerminal
-            markets={markets}
-            selectedMarket={selectedMarket}
-            onSelectMarket={setSelectedMarket}
-          />
-        )}
-        {activeTab === "orders" && (
-          <OrdersAndTrades
-            orders={orders}
-            trades={trades}
-          />
-        )}
-        {activeTab === "risk" && (
-          <RiskAndStrategy
-            riskSettings={riskSettings}
-            liveReadiness={liveReadiness}
-            systemHealth={systemHealth}
-            onUpdateRiskSettings={handleUpdateRiskSettings}
-            onToggleTradingMode={handleToggleTradingMode}
-            onNavigateToExchanges={() => setActiveTab("exchanges")}
-          />
-        )}
-        {activeTab === "exchanges" && (
-          <ExchangeConnections
-            exchanges={exchangeAccounts}
-            onAddExchange={handleAddExchange}
-            onDeleteExchange={handleDeleteExchange}
-            onRefresh={fetchData}
-          />
-        )}
-        {activeTab === "admin" && (
-          <SystemHealthPanel
-            systemHealth={systemHealth}
-            auditLogs={auditLogs}
-          />
-        )}
-      </main>
-    </div>
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 py-6">
+          {activeTab === "dashboard" && (
+            <DashboardOverview
+              balances={balances || []}
+              opportunities={opportunities || []}
+              systemHealth={systemHealth}
+              analytics={analytics}
+              onSelectTab={setActiveTab}
+            />
+          )}
+          {activeTab === "trade" && (
+            <TradePanel
+              markets={markets || []}
+              riskSettings={riskSettings}
+              onOrderExecuted={fetchData}
+            />
+          )}
+          {activeTab === "portfolio" && (
+            <PortfolioView
+              balances={balances || []}
+              trades={trades || []}
+            />
+          )}
+          {activeTab === "wallet" && (
+            <Wallet
+              tradingMode={riskSettings?.tradingMode || "PAPER"}
+              onNavigate={setActiveTab}
+            />
+          )}
+          {activeTab === "scanner" && (
+            <MarketScanner
+              markets={markets || []}
+              onSelectMarket={(m) => {
+                setSelectedMarket(m);
+                setActiveTab("terminal");
+              }}
+            />
+          )}
+          {activeTab === "arbitrage" && (
+            <ArbitrageScanner
+              opportunities={opportunities || []}
+              riskSettings={riskSettings}
+              onExecuteOpportunity={handleExecuteOpportunity}
+            />
+          )}
+          {activeTab === "terminal" && (
+            <TradingTerminal
+              markets={markets || []}
+              selectedMarket={selectedMarket}
+              onSelectMarket={setSelectedMarket}
+            />
+          )}
+          {activeTab === "orders" && (
+            <OrdersAndTrades
+              orders={orders || []}
+              trades={trades || []}
+            />
+          )}
+          {activeTab === "risk" && (
+            <RiskAndStrategy
+              riskSettings={riskSettings}
+              liveReadiness={liveReadiness}
+              systemHealth={systemHealth}
+              onUpdateRiskSettings={handleUpdateRiskSettings}
+              onToggleTradingMode={handleToggleTradingMode}
+              onNavigateToExchanges={() => setActiveTab("exchanges")}
+            />
+          )}
+          {activeTab === "exchanges" && (
+            <ExchangeConnections
+              exchanges={exchangeAccounts || []}
+              onAddExchange={handleAddExchange}
+              onDeleteExchange={handleDeleteExchange}
+              onRefresh={fetchData}
+            />
+          )}
+          {activeTab === "admin" && (
+            <SystemHealthPanel
+              systemHealth={systemHealth}
+              auditLogs={auditLogs || []}
+            />
+          )}
+        </main>
+      </div>
+    </ErrorBoundary>
   );
 }

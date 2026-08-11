@@ -54,7 +54,7 @@ export function DashboardOverview({ balances, opportunities, systemHealth, analy
           </div>
           <div className="text-xs text-slate-400 mt-2">
             Max Net Edge: <span className="text-cyan-400 font-mono font-semibold">
-              {(opportunities || []).length > 0 ? Math.max(...(opportunities || []).map(o => o.netEdgePercent)).toFixed(2) : "0.00"}%
+              {((opportunities || []).length > 0) ? Math.max(...(opportunities || []).map(o => o?.netEdgePercent || 0)).toFixed(2) : "0.00"}%
             </span>
           </div>
         </div>
