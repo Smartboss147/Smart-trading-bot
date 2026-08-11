@@ -122,14 +122,14 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {exchanges.map(ex => (
+          {(exchanges || []).filter(ex => ex && ex.id).map(ex => (
             <div key={ex.id} className="bg-slate-900 border border-slate-800 p-5 rounded-lg flex flex-col justify-between relative space-y-4">
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <Key className="w-5 h-5 text-cyan-400" />
                     <div>
-                      <h3 className="font-bold text-slate-100 text-base">{ex.exchangeName}</h3>
+                      <h3 className="font-bold text-slate-100 text-base">{ex.exchangeName || "Unknown Exchange"}</h3>
                       <span className="text-[10px] text-slate-500 flex items-center gap-1 mt-0.5">
                         <Layers className="w-3 h-3" /> {ex.accountType || "Spot Trading Account"}
                       </span>
@@ -142,7 +142,7 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
                         : "bg-rose-500/10 text-rose-400 border border-rose-500/30"
                     }`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${ex.status === "CONNECTED" ? "bg-emerald-400" : "bg-rose-400"}`} />
-                      {ex.status}
+                      {ex.status || "DISCONNECTED"}
                     </span>
                     <div className="flex items-center gap-1">
                       <button
@@ -168,7 +168,7 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
                 <div className="space-y-2 text-xs font-mono text-slate-400">
                   <div className="flex justify-between bg-slate-950 p-2 rounded border border-slate-800">
                     <span>API Key:</span>
-                    <span className="text-slate-200">{ex.apiKeyMasked}</span>
+                    <span className="text-slate-200">{ex.apiKeyMasked || "••••••••"}</span>
                   </div>
                   <div className="flex justify-between bg-slate-950 p-2 rounded border border-slate-800">
                     <span>Permissions:</span>

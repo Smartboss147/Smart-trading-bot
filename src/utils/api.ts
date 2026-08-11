@@ -5,7 +5,6 @@ export async function safeFetchJson<T = any>(
   try {
     const isPostOrPut = options?.method === 'POST' || options?.method === 'PUT';
     
-    // Ensure URL is absolute if it starts with / to avoid issues in some iframe/mobile environments
     let origin = "";
     try {
       origin = window.location.origin;
@@ -16,7 +15,8 @@ export async function safeFetchJson<T = any>(
       console.warn("[API] Could not determine window.location.origin");
     }
 
-    const fullUrl = url;
+    // Ensure URL is absolute for consistency in all environments
+    const fullUrl = url.startsWith("/") ? `${origin}${url}` : url;
     
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000); // 1 minute timeout

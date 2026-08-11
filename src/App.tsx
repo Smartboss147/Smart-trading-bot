@@ -158,12 +158,6 @@ export default function App() {
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
     try {
-      // First check if server is reachable
-      const health = await safeFetchJson("/api/health");
-      if (!health.ok) {
-        console.warn("[App] Health check failed:", health.error);
-      }
-
       const endpoints = [
         "/api/markets",
         "/api/opportunities",
@@ -177,19 +171,17 @@ export default function App() {
         "/api/trading/live-readiness"
       ];
 
-      const results = [];
-      for (const ep of endpoints) {
-        try {
-          console.log(`[App] Fetching ${ep}...`);
-          const res = await safeFetchJson(ep);
-          console.log(`[App] Fetched ${ep}:`, res.ok ? "OK" : "FAILED", res.error || "");
-          results.push(res);
-        } catch (epErr: any) {
-          console.error(`[App] Endpoint ${ep} crashed:`, epErr);
-          results.push({ ok: false, error: epErr.message });
-        }
-      }
+      // Fetch all in parallel to prevent blocking
+      const resultPromises = endpoints.map(ep => safeFetchJson(ep));
+      const settlements = await Promise.allSettled(resultPromises);
+      
+      const results = settlements.map((s, i) => {
+        if (s.status === "fulfilled") return s.value;
+        console.error(`[App] Settlement failed for ${endpoints[i]}:`, s.reason);
+        return { ok: false, error: String(s.reason) };
+      });
 
+      // Defensive updates with null checks
       if (results[0].ok && Array.isArray(results[0].data)) setMarkets(results[0].data);
       if (results[1].ok && Array.isArray(results[1].data)) setOpportunities(results[1].data);
       if (results[2].ok && Array.isArray(results[2].data)) setOrders(results[2].data);
@@ -201,7 +193,7 @@ export default function App() {
       if (results[8].ok && results[8].data) setAnalytics(results[8].data);
       if (results[9].ok && results[9].data) setLiveReadiness(results[9].data);
     } catch (globalErr: any) {
-      console.error("[App] fetchData global error:", globalErr);
+      console.error("[App] fetchData global crash:", globalErr);
     } finally {
       isFetchingRef.current = false;
     }
@@ -274,17 +266,25 @@ export default function App() {
       return { success: false, error: "API Key or Secret appears too short. Please ensure you copied the full strings accurately from the exchange." };
     }
 
-    const res = await safeFetchJson("/api/exchanges", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ exchangeName, apiKey: cleanKey, apiSecret: cleanSecret })
-    });
+    try {
+      const res = await safeFetchJson("/api/exchanges", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exchangeName, apiKey: cleanKey, apiSecret: cleanSecret })
+      });
 
-    if (!res.ok) {
-      return { success: false, error: res.error || "Failed to connect exchange." };
+      if (!res.ok) {
+        return { success: false, error: res.error || "Failed to connect exchange." };
+      }
+      
+      // Force a delayed fetch to allow DB to settle
+      setTimeout(() => fetchData(), 500);
+      
+      return { success: true };
+    } catch (err: any) {
+      console.error("[App] Add exchange crashed:", err);
+      return { success: false, error: "Critical error during connection. The app will attempt to recover automatically." };
     }
-    fetchData();
-    return { success: true };
   };
 
   const handleDeleteExchange = async (id: string) => {

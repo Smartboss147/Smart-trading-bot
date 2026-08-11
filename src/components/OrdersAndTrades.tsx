@@ -38,7 +38,7 @@ export function OrdersAndTrades({ orders, trades }: OrdersAndTradesProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {(orders || []).map(o => (
+                {(orders || []).filter(o => o && o.id).map(o => (
                   <tr key={o.id} className="hover:bg-slate-800/40">
                     <td className="py-2.5 px-3 text-cyan-400">{o.id}</td>
                     <td className="py-2.5 px-3 text-center">
@@ -94,7 +94,7 @@ export function OrdersAndTrades({ orders, trades }: OrdersAndTradesProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {(trades || []).map(t => (
+                {(trades || []).filter(t => t && t.id).map(t => (
                   <tr key={t.id} className="hover:bg-slate-800/40">
                     <td className="py-2.5 px-3 text-cyan-400">{t.id}</td>
                     <td className="py-2.5 px-3 text-center">

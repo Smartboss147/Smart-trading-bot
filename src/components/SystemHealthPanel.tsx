@@ -46,7 +46,7 @@ export function SystemHealthPanel({ systemHealth, auditLogs }: SystemHealthPanel
         </h2>
 
         <div className="space-y-2 font-mono text-xs">
-          {(auditLogs || []).map(log => (
+          {(auditLogs || []).filter(l => l && l.id).map(log => (
             <div key={log.id} className="bg-slate-950 p-3 rounded border border-slate-800/80 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <span className="px-2 py-0.5 rounded text-[10px] bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">

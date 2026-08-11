@@ -11,7 +11,7 @@ interface DashboardOverviewProps {
 }
 
 export function DashboardOverview({ balances, opportunities, systemHealth, analytics, onSelectTab }: DashboardOverviewProps) {
-  const totalBalance = (balances || []).reduce((acc, b) => acc + (b.usdValue || 0), 0);
+  const totalBalance = (balances || []).reduce((acc, b) => acc + (b?.usdValue || 0), 0);
 
   return (
     <div className="space-y-6">
