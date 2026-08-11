@@ -380,8 +380,15 @@ class GateWSManager {
   public async pollRest() {
     try {
       console.log(`[GateWS] Polling REST API tickers...`);
-      // Use public REST API for tickers as fallback
-      const response = await fetch('https://api.gateio.ws/api/v4/spot/tickers');
+      // Use public REST API for tickers as fallback with 5s timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const response = await fetch('https://api.gateio.ws/api/v4/spot/tickers', {
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      
       if (response.ok) {
         const data: any = await response.json();
         if (Array.isArray(data)) {
@@ -395,7 +402,7 @@ class GateWSManager {
         }
       }
     } catch (e: any) {
-      console.warn('[GateWS] REST poll fallback failed:', e.message);
+      console.warn('[GateWS] REST poll fallback failed:', e.name === 'AbortError' ? 'Timeout' : e.message);
     }
   }
 
@@ -747,8 +754,9 @@ app.get("/api/opportunities", async (req, res) => {
   const isStale = Array.from(marketsMap.values()).some(m => (now - m.timestamp) > staleThreshold);
   
   if (isStale || process.env.VERCEL) {
-    console.log("[Server] Data stale or on Vercel, refreshing market data and arbitrage...");
-    await gateWSManager.pollRest();
+    console.log("[Server] Data stale or on Vercel, triggering refresh...");
+    // Trigger in background if already in a request to prevent blocking the response
+    gateWSManager.pollRest().catch(e => console.error("[Server] Background poll failed:", e.message));
     calculateRealArbitrage();
   }
   
@@ -776,7 +784,19 @@ app.get("/api/balances", async (req, res) => {
       return res.status(503).json({ error: "Exchange unavailable: Gate.io API keys missing or invalid" });
     }
     try {
-      const response = await spotApi.listSpotAccounts();
+      console.log("[Server] Fetching live balances from Gate.io...");
+      // Add a 10s timeout to the SDK call
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Gate.io balance request timed out (10s)")), 10000)
+      );
+      
+      const apiPromise = spotApi.listSpotAccounts();
+      const response = await Promise.race([apiPromise, timeoutPromise]) as any;
+      
+      if (!response || !response.body) {
+        throw new Error("No response body from Gate.io");
+      }
+      
       const accounts = response.body;
 
       const liveBalances = accounts.map((acc: any) => ({
@@ -795,8 +815,16 @@ app.get("/api/balances", async (req, res) => {
 
       return res.json(liveBalances);
     } catch (e: any) {
-      console.error("Failed to fetch Gate.io balances", e);
-      return res.status(503).json({ error: "Exchange unavailable: Failed to fetch live balances from Gate.io" });
+      console.error("Failed to fetch Gate.io balances:", e.message);
+      
+      // Fallback to cached balances if live fetch fails
+      const cached = currentDb.balances.filter((b: any) => b.mode === "LIVE");
+      if (cached.length > 0) {
+        console.log("[Server] Returning cached live balances due to fetch failure");
+        return res.json(cached);
+      }
+      
+      return res.status(503).json({ error: `Exchange unavailable: ${e.message}` });
     }
   }
 

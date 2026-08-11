@@ -19,7 +19,7 @@ export async function safeFetchJson<T = any>(
     const fullUrl = url.startsWith("/") ? `${origin}${url}` : url;
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 1 minute timeout
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 seconds timeout
 
     const fetchOptions: RequestInit = {
       ...options,
