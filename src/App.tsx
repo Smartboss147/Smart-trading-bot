@@ -58,9 +58,15 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
               <AlertTriangle className="w-8 h-8 text-rose-500" />
             </div>
             <h1 className="text-xl font-bold mb-2">Something went wrong</h1>
-            <p className="text-slate-400 text-sm mb-8">
+            <p className="text-slate-400 text-sm mb-4">
               The application encountered an unexpected error. This usually happens due to a temporary connection issue.
             </p>
+            {this.state.error && (
+              <div className="bg-slate-950/50 border border-slate-800 rounded p-3 mb-8 text-left">
+                <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Error Detail</p>
+                <p className="text-xs font-mono text-rose-400 break-words">{this.state.error.message}</p>
+              </div>
+            )}
             <div className="space-y-3">
               <button
                 onClick={() => window.location.reload()}
@@ -297,13 +303,44 @@ export default function App() {
 
   const totalBalanceUsd = (balances || []).reduce((acc, b) => acc + (b?.usdValue || 0), 0);
 
+  // Safe defaults for complex objects
+  const safeSystemHealth: SystemHealth = systemHealth || { 
+    exchangeWs: 'DISCONNECTED',
+    restApi: 'CONNECTED',
+    database: 'HEALTHY',
+    marketData: 'STALE',
+    dataLatencyMs: 0,
+    executionEngine: 'STOPPED',
+    riskEngine: 'ACTIVE',
+    activeStrategiesCount: 0,
+    uptimeSeconds: 0,
+  };
+  const safeRiskSettings: RiskSettings = riskSettings || { 
+    tradingMode: 'PAPER',
+    minNetEdgePercent: 0.5,
+    maxTradeSizeUsd: 100,
+    maxDailyLossUsd: 50,
+    maxConcurrentTrades: 1,
+    maxSlippagePercent: 0.1,
+    maxDataAgeMs: 5000,
+    minLiquidityUsd: 500,
+    killSwitchActive: false,
+  };
+  const safeAnalytics = analytics || { 
+    totalProfit: 0, 
+    dailyProfit: 0, 
+    winRate: 0, 
+    totalTrades: 0, 
+    profitHistory: [] 
+  };
+
   if (activeTab === "ipad") {
     return (
       <ErrorBoundary>
         <IpadMonitorMode
           markets={markets || []}
           opportunities={opportunities || []}
-          systemHealth={systemHealth}
+          systemHealth={safeSystemHealth}
           onExit={() => setActiveTab("dashboard")}
         />
       </ErrorBoundary>
@@ -316,13 +353,13 @@ export default function App() {
         <Navbar
           activeTab={activeTab}
           setActiveTab={setActiveTab}
-          riskSettings={riskSettings}
-          systemHealth={systemHealth}
+          riskSettings={safeRiskSettings}
+          systemHealth={safeSystemHealth}
           onToggleKillSwitch={handleToggleKillSwitch}
           totalBalanceUsd={totalBalanceUsd}
         />
 
-        {riskSettings?.tradingMode === "LIVE" && (
+        {safeRiskSettings?.tradingMode === "LIVE" && (
           <div className="bg-amber-500 text-amber-950 px-4 py-2 text-center text-sm font-bold flex items-center justify-center gap-2 tracking-wide shadow-md shadow-amber-500/20 z-40 relative">
             <AlertTriangle className="w-5 h-5" />
             REAL MONEY MODE — Your connected account contains real funds. Orders may result in real financial transactions.
@@ -334,15 +371,15 @@ export default function App() {
             <DashboardOverview
               balances={balances || []}
               opportunities={opportunities || []}
-              systemHealth={systemHealth}
-              analytics={analytics}
+              systemHealth={safeSystemHealth}
+              analytics={safeAnalytics}
               onSelectTab={setActiveTab}
             />
           )}
           {activeTab === "trade" && (
             <TradePanel
               markets={markets || []}
-              riskSettings={riskSettings}
+              riskSettings={safeRiskSettings}
               onOrderExecuted={fetchData}
             />
           )}
@@ -354,7 +391,7 @@ export default function App() {
           )}
           {activeTab === "wallet" && (
             <Wallet
-              tradingMode={riskSettings?.tradingMode || "PAPER"}
+              tradingMode={safeRiskSettings?.tradingMode || "PAPER"}
               onNavigate={setActiveTab}
             />
           )}
@@ -370,7 +407,7 @@ export default function App() {
           {activeTab === "arbitrage" && (
             <ArbitrageScanner
               opportunities={opportunities || []}
-              riskSettings={riskSettings}
+              riskSettings={safeRiskSettings}
               onExecuteOpportunity={handleExecuteOpportunity}
             />
           )}
@@ -389,9 +426,9 @@ export default function App() {
           )}
           {activeTab === "risk" && (
             <RiskAndStrategy
-              riskSettings={riskSettings}
+              riskSettings={safeRiskSettings}
               liveReadiness={liveReadiness}
-              systemHealth={systemHealth}
+              systemHealth={safeSystemHealth}
               onUpdateRiskSettings={handleUpdateRiskSettings}
               onToggleTradingMode={handleToggleTradingMode}
               onNavigateToExchanges={() => setActiveTab("exchanges")}
@@ -407,7 +444,7 @@ export default function App() {
           )}
           {activeTab === "admin" && (
             <SystemHealthPanel
-              systemHealth={systemHealth}
+              systemHealth={safeSystemHealth}
               auditLogs={auditLogs || []}
             />
           )}

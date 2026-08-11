@@ -1,6 +1,6 @@
 {
   "riskSettings": {
-    "tradingMode": "PAPER",
+    "tradingMode": "LIVE",
     "minNetEdgePercent": 0.15,
     "maxTradeSizeUsd": 100,
     "maxDailyLossUsd": 25,
@@ -10,7 +10,21 @@
     "minLiquidityUsd": 5000,
     "killSwitchActive": false
   },
-  "exchangeAccounts": [],
+  "exchangeAccounts": [
+    {
+      "id": "ex-1786457089387",
+      "exchangeName": "Gate.io",
+      "apiKeyMasked": "7dda••••••••42c8",
+      "status": "CONNECTED",
+      "permissions": [
+        "SPOT",
+        "READ",
+        "TRADE"
+      ],
+      "lastSync": 1786457089387,
+      "isPaper": false
+    }
+  ],
   "balances": [
     {
       "asset": "NGN",
@@ -67,15 +81,6 @@
       "locked": 0,
       "total": 5200,
       "usdValue": 5200
-    },
-    {
-      "asset": "NGN",
-      "exchange": "Internal",
-      "free": 45000,
-      "locked": 5000,
-      "total": 50000,
-      "usdValue": 0,
-      "mode": "LIVE"
     }
   ],
   "orders": [
@@ -267,7 +272,100 @@
       "completedAt": 1786169809820
     }
   ],
+  "ledger": [
+    {
+      "id": "wd-1786170954133",
+      "userId": "user-1",
+      "accountMode": "LIVE",
+      "transactionType": "WITHDRAWAL",
+      "currency": "NGN",
+      "amount": 5000,
+      "direction": "DEBIT",
+      "balanceBefore": 50000,
+      "balanceAfter": 45000,
+      "reference": "wd-1786170954133",
+      "status": "PROCESSING",
+      "createdAt": 1786170954133,
+      "updatedAt": 1786170954133
+    },
+    {
+      "id": "led-1786170924526",
+      "userId": "user-1",
+      "accountMode": "LIVE",
+      "transactionType": "DEPOSIT",
+      "currency": "NGN",
+      "amount": 50000,
+      "direction": "CREDIT",
+      "balanceBefore": 0,
+      "balanceAfter": 50000,
+      "reference": "dep-1786170915245",
+      "providerReference": "123456",
+      "status": "SUCCESSFUL",
+      "createdAt": 1786170924526,
+      "updatedAt": 1786170924526
+    },
+    {
+      "id": "led-1786170721563",
+      "userId": "user-1",
+      "accountMode": "LIVE",
+      "transactionType": "DEPOSIT",
+      "currency": "NGN",
+      "amount": 50000,
+      "direction": "CREDIT",
+      "balanceBefore": 0,
+      "balanceAfter": 50000,
+      "reference": "dep-1786170641678",
+      "providerReference": "123456",
+      "status": "SUCCESSFUL",
+      "createdAt": 1786170721563,
+      "updatedAt": 1786170721563
+    }
+  ],
+  "deposits": [
+    {
+      "id": "dep-1786170915245",
+      "userId": "user-1",
+      "amount": 50000,
+      "currency": "NGN",
+      "paymentMethod": "PAYSTACK",
+      "reference": "dep-1786170915245",
+      "status": "SUCCESSFUL",
+      "mode": "LIVE",
+      "createdAt": 1786170915245,
+      "updatedAt": 1786170924526,
+      "providerReference": "123456"
+    },
+    {
+      "id": "dep-1786170641678",
+      "userId": "user-1",
+      "amount": 50000,
+      "currency": "NGN",
+      "paymentMethod": "PAYSTACK",
+      "reference": "dep-1786170641678",
+      "status": "SUCCESSFUL",
+      "mode": "LIVE",
+      "createdAt": 1786170641678,
+      "updatedAt": 1786170721563,
+      "providerReference": "123456"
+    }
+  ],
   "auditLogs": [
+    {
+      "id": "log-1786457123707",
+      "action": "TRADING_MODE_CHANGED",
+      "category": "RISK",
+      "details": "Trading mode switched to LIVE.",
+      "timestamp": 1786457123707,
+      "user": "admin"
+    },
+    {
+      "id": "log-1786457089387",
+      "action": "EXCHANGE_CONNECTED",
+      "category": "EXCHANGE",
+      "details": "Successfully authenticated and connected exchange: Gate.io",
+      "timestamp": 1786457089387,
+      "user": "admin"
+    },
     {
       "id": "log-1786257815758",
       "action": "TRADING_MODE_CHANGED",
@@ -427,83 +525,6 @@
       "details": "Binance WebSocket feed connected successfully.",
       "timestamp": 1786169029539,
       "user": "admin"
-    }
-  ],
-  "deposits": [
-    {
-      "id": "dep-1786170915245",
-      "userId": "user-1",
-      "amount": 50000,
-      "currency": "NGN",
-      "paymentMethod": "PAYSTACK",
-      "reference": "dep-1786170915245",
-      "status": "SUCCESSFUL",
-      "mode": "LIVE",
-      "createdAt": 1786170915245,
-      "updatedAt": 1786170924526,
-      "providerReference": "123456"
-    },
-    {
-      "id": "dep-1786170641678",
-      "userId": "user-1",
-      "amount": 50000,
-      "currency": "NGN",
-      "paymentMethod": "PAYSTACK",
-      "reference": "dep-1786170641678",
-      "status": "SUCCESSFUL",
-      "mode": "LIVE",
-      "createdAt": 1786170641678,
-      "updatedAt": 1786170721563,
-      "providerReference": "123456"
-    }
-  ],
-  "ledger": [
-    {
-      "id": "wd-1786170954133",
-      "userId": "user-1",
-      "accountMode": "LIVE",
-      "transactionType": "WITHDRAWAL",
-      "currency": "NGN",
-      "amount": 5000,
-      "direction": "DEBIT",
-      "balanceBefore": 50000,
-      "balanceAfter": 45000,
-      "reference": "wd-1786170954133",
-      "status": "PROCESSING",
-      "createdAt": 1786170954133,
-      "updatedAt": 1786170954133
-    },
-    {
-      "id": "led-1786170924526",
-      "userId": "user-1",
-      "accountMode": "LIVE",
-      "transactionType": "DEPOSIT",
-      "currency": "NGN",
-      "amount": 50000,
-      "direction": "CREDIT",
-      "balanceBefore": 0,
-      "balanceAfter": 50000,
-      "reference": "dep-1786170915245",
-      "providerReference": "123456",
-      "status": "SUCCESSFUL",
-      "createdAt": 1786170924526,
-      "updatedAt": 1786170924526
-    },
-    {
-      "id": "led-1786170721563",
-      "userId": "user-1",
-      "accountMode": "LIVE",
-      "transactionType": "DEPOSIT",
-      "currency": "NGN",
-      "amount": 50000,
-      "direction": "CREDIT",
-      "balanceBefore": 0,
-      "balanceAfter": 50000,
-      "reference": "dep-1786170641678",
-      "providerReference": "123456",
-      "status": "SUCCESSFUL",
-      "createdAt": 1786170721563,
-      "updatedAt": 1786170721563
     }
   ]
 }

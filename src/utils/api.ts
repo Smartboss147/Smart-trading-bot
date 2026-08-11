@@ -15,8 +15,7 @@ export async function safeFetchJson<T = any>(
       console.warn("[API] Could not determine window.location.origin");
     }
 
-    // Ensure URL is absolute for consistency in all environments
-    const fullUrl = url.startsWith("/") ? `${origin}${url}` : url;
+    const fullUrl = url;
     
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 seconds timeout
