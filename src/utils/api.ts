@@ -3,38 +3,65 @@ export async function safeFetchJson<T = any>(
   options?: RequestInit
 ): Promise<{ ok: boolean; data?: T; error?: string; status?: number }> {
   try {
-    // Ensure URL is absolute for better Safari compatibility and to avoid redirects
-    const fullUrl = url.startsWith("/") 
-      ? `${window.location.origin}${url}` 
-      : url;
+    const isPostOrPut = options?.method === 'POST' || options?.method === 'PUT';
+    
+    // Ensure URL is absolute if it starts with / to avoid issues in some iframe/mobile environments
+    let origin = "";
+    try {
+      origin = window.location.origin;
+      if (!origin || origin === "null") {
+        origin = `${window.location.protocol}//${window.location.host}`;
+      }
+    } catch (e) {
+      console.warn("[API] Could not determine window.location.origin");
+    }
 
-    // Safari can be picky about headers and methods
+    const fullUrl = (url.startsWith("/") && origin) ? `${origin}${url}` : url;
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 1 minute timeout
+
     const fetchOptions: RequestInit = {
       ...options,
-      headers: new Headers(options?.headers || {}),
+      signal: controller.signal,
+      headers: {
+        'Accept': 'application/json',
+        ...(isPostOrPut ? { 'Content-Type': 'application/json' } : {}),
+        ...((options?.headers as Record<string, string>) || {})
+      }
     };
 
-    const res = await fetch(fullUrl, fetchOptions);
+    console.log(`[API] Fetching ${fullUrl}...`);
+    let res: Response;
+    try {
+      res = await fetch(fullUrl, fetchOptions);
+    } catch (fetchErr: any) {
+      // Catch specific errors like AbortError or TypeError
+      console.error(`[API] Native fetch failed for ${fullUrl}:`, fetchErr.name, fetchErr.message);
+      throw fetchErr; 
+    } finally {
+      clearTimeout(timeoutId);
+    }
+    
+    console.log(`[API] Response ${url}: ${res.status}`);
+    
     const contentType = res.headers.get("content-type") || "";
-
     let jsonBody: any = null;
     let text = "";
 
     try {
       text = await res.text();
-    } catch (readErr: any) {
-      console.warn(`[API] Could not read response text for ${url}:`, readErr.message);
+    } catch (e) {
+      console.warn(`[API] Could not read text for ${url}`);
     }
 
     if (contentType.includes("application/json") && text) {
       try {
         jsonBody = JSON.parse(text);
-      } catch (parseErr) {
-        console.error(`[API] JSON parse error for ${url}:`, text.substring(0, 100));
-        // Fallback: if it's not JSON but was supposed to be
+      } catch (e) {
+        console.error(`[API] JSON parse error for ${url}`);
       }
     } else if (text && !text.trim().startsWith("<")) {
-      // If it's plain text and not HTML
       try {
         jsonBody = JSON.parse(text);
       } catch {
@@ -43,35 +70,24 @@ export async function safeFetchJson<T = any>(
     }
 
     if (!res.ok) {
-      if (text.trim().startsWith("<!DOCTYPE html") || text.trim().startsWith("<html")) {
-        return {
-          ok: false,
-          status: res.status,
-          error: `Backend error (${res.status}): Server returned HTML. This may mean the API route is missing or crashed.`
-        };
-      }
-
-      const errorMsg =
-        jsonBody?.error ||
-        jsonBody?.message ||
-        jsonBody?.label ||
-        (text && text.length < 200 ? text : `Server error (${res.status} ${res.statusText})`);
-      
+      const errorMsg = jsonBody?.error || jsonBody?.message || `Server error (${res.status})`;
       return { ok: false, status: res.status, data: jsonBody, error: errorMsg };
     }
 
     return { ok: true, status: res.status, data: jsonBody };
   } catch (e: any) {
-    console.error(`[API] Fetch error for ${url}:`, e.message);
-    // Specific check for Safari's "The string did not match the expected pattern"
-    let userFriendlyError = e.message;
-    if (e.message === "The string did not match the expected pattern") {
-      userFriendlyError = "Browser rejected the request format. This can happen in Safari due to invalid characters in keys or a blocked connection.";
-    }
+    console.error(`[API] Error for ${url}:`, e.name, e.message);
     
+    let errorMsg = `Connection failed: ${e.message}`;
+    if (e.name === 'AbortError') {
+      errorMsg = "Request timed out. The server might be slow or the connection was interrupted.";
+    } else if (e.name === 'TypeError' && e.message === 'Load failed') {
+      errorMsg = "Network request failed. This is often caused by CORS issues, ad-blockers, or the server being unreachable.";
+    }
+
     return {
       ok: false,
-      error: userFriendlyError || "Network request failed. Please check connection."
+      error: errorMsg
     };
   }
 }

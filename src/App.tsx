@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Navbar } from "./components/Navbar";
 import { DashboardOverview } from "./components/DashboardOverview";
 import { MarketScanner } from "./components/MarketScanner";
@@ -19,6 +19,15 @@ import { Market, ArbitrageOpportunity, Order, Trade, Balance, RiskSettings, Exch
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
+  
+  // Global error logging for debugging
+  useEffect(() => {
+    const handleError = (e: ErrorEvent) => {
+      console.error("[App] Global error:", e.message, e.filename, e.lineno);
+    };
+    window.addEventListener("error", handleError);
+    return () => window.removeEventListener("error", handleError);
+  }, []);
   const [markets, setMarkets] = useState<Market[]>([]);
   const [opportunities, setOpportunities] = useState<ArbitrageOpportunity[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -35,7 +44,7 @@ export default function App() {
   // Fetch initial data
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 3000);
+    const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -44,8 +53,13 @@ export default function App() {
     let ws: WebSocket | null = null;
     try {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const host = window.location.host || "localhost:3000";
+      const host = window.location.host;
+      if (!host) {
+        console.warn("WebSocket skipped: window.location.host is empty");
+        return;
+      }
       const wsUrl = `${protocol}//${host}`;
+      console.log(`[App] Connecting WebSocket to ${wsUrl}`);
       ws = new WebSocket(wsUrl);
 
       ws.onmessage = (event) => {
@@ -69,8 +83,18 @@ export default function App() {
     };
   }, []);
 
+  const isFetchingRef = useRef(false);
+
   const fetchData = async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     try {
+      // First check if server is reachable
+      const health = await safeFetchJson("/api/health");
+      if (!health.ok) {
+        console.warn("[App] Health check failed:", health.error);
+      }
+
       const endpoints = [
         "/api/markets",
         "/api/opportunities",
@@ -102,8 +126,8 @@ export default function App() {
       if (results[7].ok && results[7].data) setAuditLogs(results[7].data);
       if (results[8].ok && results[8].data) setAnalytics(results[8].data);
       if (results[9].ok && results[9].data) setLiveReadiness(results[9].data);
-    } catch (e: any) {
-      // Ignore transient network errors during preview startup
+    } finally {
+      isFetchingRef.current = false;
     }
   };
 
@@ -147,15 +171,14 @@ export default function App() {
   };
 
   const handleExecuteOpportunity = async (opp: ArbitrageOpportunity) => {
-    const res = await fetch("/api/execute-arbitrage", {
+    const res = await safeFetchJson("/api/execute-arbitrage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ opportunityId: opp.id })
     });
     
     if (!res.ok) {
-      const err = await res.json();
-      alert(err.error || "Trade cancelled — opportunity no longer profitable.");
+      alert(res.error || "Trade cancelled — opportunity no longer profitable.");
       fetchData();
       return;
     }
@@ -165,14 +188,22 @@ export default function App() {
   };
 
   const handleAddExchange = async (exchangeName: string, apiKey: string, apiSecret: string) => {
-    const cleanKey = apiKey.trim();
-    const cleanSecret = apiSecret.trim();
+    // Sanitize keys to remove all non-printable characters, spaces, and hidden Unicode symbols
+    const sanitize = (str: string) => str.trim().replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, "");
+    
+    const cleanKey = sanitize(apiKey);
+    const cleanSecret = sanitize(apiSecret);
+
+    if (cleanKey.length < 16 || cleanSecret.length < 16) {
+      return { success: false, error: "API Key or Secret appears too short. Please ensure you copied the full strings accurately from the exchange." };
+    }
 
     const res = await safeFetchJson("/api/exchanges", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ exchangeName, apiKey: cleanKey, apiSecret: cleanSecret })
     });
+
     if (!res.ok) {
       return { success: false, error: res.error || "Failed to connect exchange." };
     }
@@ -181,7 +212,10 @@ export default function App() {
   };
 
   const handleDeleteExchange = async (id: string) => {
-    await fetch(`/api/exchanges/${id}`, { method: "DELETE" });
+    const res = await safeFetchJson(`/api/exchanges/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      alert(res.error || "Failed to delete exchange.");
+    }
     fetchData();
   };
 

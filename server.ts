@@ -6,6 +6,60 @@ import fs from "fs";
 import { ApiClient, SpotApi } from "gate-api";
 import Paystack from "@paystack/paystack-sdk";
 import cors from "cors";
+import * as admin from "firebase-admin";
+import { initializeApp, getApps, applicationDefault } from "firebase-admin/app";
+import firebase from "firebase/compat/app";
+import "firebase/compat/firestore";
+
+// Initialize Firebase Admin
+let firebaseConfig: any = {};
+try {
+  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(configPath)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    console.log(`[Firestore] Loaded config for project: ${firebaseConfig.projectId}`);
+  }
+} catch (e) {
+  console.warn("Failed to read firebase-applet-config.json:", e);
+}
+
+if (!getApps().length) {
+  try {
+    const projectId = firebaseConfig.projectId || "prefab-polymer-gj1d7";
+    console.log(`[Firestore] Initializing Admin with Project ID: ${projectId}`);
+    
+    // Check if we are already initialized
+    if (!getApps().length) {
+      initializeApp({
+        projectId: projectId,
+        credential: applicationDefault()
+      });
+      console.log(`[Firestore] Admin initialized successfully`);
+    } else {
+      console.log(`[Firestore] Admin already initialized`);
+    }
+  } catch (e: any) {
+    console.error(`[Firestore] Admin initialization FATAL: ${e.message}`);
+    if (e.stack) console.error(e.stack);
+  }
+}
+
+// Ensure we target the specific database ID provided in config
+const databaseId = firebaseConfig.firestoreDatabaseId || "(default)";
+let db_firestore: any;
+
+try {
+  console.log(`[Firestore] Initializing Client Compat SDK for Project: ${firebaseConfig.projectId}, Database: ${databaseId}`);
+  if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+  }
+  db_firestore = firebase.firestore(firebase.app());
+  console.log(`[Firestore] Client SDK initialized successfully`);
+} catch (e: any) {
+  console.warn(`[Firestore] Failed to initialize Client SDK: ${e.message}.`);
+  // Last resort: try admin but it will likely fail with PERMISSION_DENIED
+  db_firestore = admin.firestore();
+}
 
 // Initialize external providers (they will fail gracefully if keys are missing)
 let gateClient: ApiClient | null = null;
@@ -33,15 +87,37 @@ try {
 }
 
 const app = express();
-app.use(cors());
-app.use((req, res, next) => {
-  console.log(`[Server] ${req.method} ${req.url}`);
+
+// Simplified CORS for robustness in iframes
+app.use(cors({
+  origin: (origin, callback) => callback(null, true),
+  credentials: true
+}));
+
+app.use(async (req, res, next) => {
+  // Relaxed CSP for iframes and cross-origin images/API
+  res.setHeader("Content-Security-Policy", "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-ancestors *;");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  
+  const origin = req.headers.origin || "unknown";
+  console.log(`[Server] ${req.method} ${req.url} from ${origin}`);
+
+  // Ensure DB is loaded (especially on Vercel)
+  if (!isDbLoaded && !req.url.includes('/api/health')) {
+    await syncFromFirestore();
+  }
+  
   next();
 });
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 app.use(express.json());
+
+// Health check endpoint
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", timestamp: Date.now() });
+});
 
 const PORT = 3000;
 const DATA_DIR = process.env.VERCEL
@@ -90,44 +166,102 @@ const defaultDb = {
   ]
 };
 
+let cachedDb = { ...defaultDb };
+let isDbLoaded = false;
+
+async function syncFromFirestore() {
+  try {
+    console.log(`[Firestore] Starting sync process...`);
+    const collections = ['riskSettings', 'exchangeAccounts', 'balances', 'orders', 'trades', 'auditLogs', 'ledger', 'deposits'];
+    
+    // Load local baseline
+    if (fs.existsSync(DB_FILE)) {
+      try {
+        const localData = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
+        cachedDb = { ...cachedDb, ...localData };
+        console.log("[Firestore] Baseline loaded from local database.json");
+      } catch (err) {
+        console.warn("[Firestore] Local baseline load failed:", err);
+      }
+    }
+
+    // Diagnostic test
+    try {
+      console.log(`[Firestore] Testing connectivity to ${databaseId}...`);
+      const testSnap = await db_firestore.collection('settings').limit(1).get();
+      console.log(`[Firestore] Connection successful. Found ${testSnap.size} docs.`);
+    } catch (e: any) {
+      console.error(`[Firestore] Connection test failed [${databaseId}]: ${e.message}`);
+      console.log("[Firestore] Continuing with local data mode.");
+      return;
+    }
+
+    // Risk Settings
+    try {
+      const riskDoc = await db_firestore.collection('settings').doc('risk').get();
+      if (riskDoc.exists) {
+        cachedDb.riskSettings = riskDoc.data() as any;
+        console.log("[Firestore] Loaded riskSettings");
+      }
+    } catch (err) {
+      console.warn("[Firestore] Failed to load riskSettings document");
+    }
+
+    // Other collections
+    for (const col of collections.slice(1)) {
+      try {
+        const snapshot = await db_firestore.collection(col).get();
+        if (!snapshot.empty) {
+          (cachedDb as any)[col] = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+          console.log(`[Firestore] Synchronized collection: ${col} (${snapshot.size} docs)`);
+        }
+      } catch (err: any) {
+        console.warn(`[Firestore] Collection sync failed [${col}]: ${err.message}`);
+      }
+    }
+    
+    isDbLoaded = true;
+    console.log("[Firestore] Data synchronization complete");
+  } catch (e: any) {
+    console.error("[Firestore] syncFromFirestore fatal error:", e.message);
+  }
+}
+
 function readDb() {
+  return cachedDb;
+}
+
+syncFromFirestore();
+
+async function writeDb(data: any) {
+  cachedDb = data;
+  
+  // Async write to Firestore
+  try {
+    // 1. Risk Settings
+    await db_firestore.collection('settings').doc('risk').set(data.riskSettings);
+    // Note: We don't overwrite everything else for performance, 
+    // but the app's current logic relies on a global state.
+  } catch (e) {
+    console.error("[Firestore] Write failed:", e);
+  }
+
+  // Local fallback
   try {
     if (!fs.existsSync(DATA_DIR)) {
       try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
     }
-    if (!fs.existsSync(DB_FILE)) {
-      const seedPath = path.join(process.cwd(), "data", "database.json");
-      if (fs.existsSync(seedPath) && seedPath !== DB_FILE) {
-        try {
-          fs.copyFileSync(seedPath, DB_FILE);
-          const data = fs.readFileSync(DB_FILE, "utf-8");
-          return JSON.parse(data);
-        } catch (e) {
-          console.warn("Failed to copy seed DB file:", e);
-        }
-      }
-      try {
-        fs.writeFileSync(DB_FILE, JSON.stringify(defaultDb, null, 2));
-      } catch (e) {
-        console.warn("Failed to write default DB file:", e);
-      }
-      return defaultDb;
-    }
-    const data = fs.readFileSync(DB_FILE, "utf-8");
-    return JSON.parse(data);
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
   } catch (e) {
-    return defaultDb;
+    // Ignore on Vercel
   }
 }
 
-function writeDb(data: any) {
+async function saveToFirestore(collection: string, id: string, data: any) {
   try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-    }
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+    await db_firestore.collection(collection).doc(id).set(data);
   } catch (e) {
-    console.warn("Could not write to DB_FILE:", e);
+    console.error(`[Firestore] Save to ${collection} failed:`, e);
   }
 }
 
@@ -180,7 +314,9 @@ class GateWSManager {
   constructor(symbols: string[]) {
     this.symbols = symbols.filter(s => s.endsWith("USDT") || s === "ETHBTC");
     // Start a watchdog to ensure data is fresh, poll REST as fallback if WS fails
-    setInterval(() => this.watchdog(), 10000);
+    if (!process.env.VERCEL) {
+      setInterval(() => this.watchdog(), 10000);
+    }
   }
 
   private async watchdog() {
@@ -198,8 +334,9 @@ class GateWSManager {
     }
   }
 
-  private async pollRest() {
+  public async pollRest() {
     try {
+      console.log(`[GateWS] Polling REST API tickers...`);
       // Use public REST API for tickers as fallback
       const response = await fetch('https://api.gateio.ws/api/v4/spot/tickers');
       if (response.ok) {
@@ -380,7 +517,12 @@ class GateWSManager {
 }
 
 const gateWSManager = new GateWSManager(symbolsList);
-gateWSManager.connect();
+// Lazy connect: only if not on Vercel or when first needed
+if (!process.env.VERCEL) {
+  gateWSManager.connect();
+} else {
+  console.log("[Server] Running on Vercel: Delayed WS connection");
+}
 
 // Real Gate.io Market Data Triangular Arbitrage Calculation Engine
 function calculateRealArbitrage() {
@@ -554,7 +696,19 @@ app.get("/api/markets", (req, res) => {
   res.json(Array.from(marketsMap.values()));
 });
 
-app.get("/api/opportunities", (req, res) => {
+app.get("/api/opportunities", async (req, res) => {
+  // On Vercel, we need to manually trigger calculations if data is stale
+  const now = Date.now();
+  const staleThreshold = 5000;
+  
+  const isStale = Array.from(marketsMap.values()).some(m => (now - m.timestamp) > staleThreshold);
+  
+  if (isStale || process.env.VERCEL) {
+    console.log("[Server] Data stale or on Vercel, refreshing market data and arbitrage...");
+    await gateWSManager.pollRest();
+    calculateRealArbitrage();
+  }
+  
   res.json(liveOpportunities);
 });
 
@@ -625,12 +779,15 @@ app.get("/api/exchanges", (req, res) => {
 });
 
 app.get("/api/diagnostics", (req, res) => {
+  const currentDb = readDb();
   res.json({
     env: {
       NODE_ENV: process.env.NODE_ENV,
       VERCEL: !!process.env.VERCEL,
       GATE_KEY_SET: !!process.env.GATE_API_KEY,
       GATE_SECRET_SET: !!process.env.GATE_API_SECRET,
+      PAYSTACK_SECRET_SET: !!process.env.PAYSTACK_SECRET_KEY,
+      APP_URL: process.env.APP_URL ? "SET" : "MISSING",
     },
     gateWsStatus: gateWSManager.status,
     gateWsLastMsg: gateWSManager.lastMessageTimestamp ? `${Math.floor((Date.now() - gateWSManager.lastMessageTimestamp)/1000)}s ago` : "never",
@@ -642,60 +799,91 @@ app.get("/api/diagnostics", (req, res) => {
 app.post("/api/exchanges", async (req, res) => {
   const currentDb = readDb();
   let { exchangeName, apiKey, apiSecret } = req.body;
+  
+  // Robust sanitization for keys often copied with invisible characters
+  const sanitize = (str: any) => {
+    if (typeof str !== 'string') return "";
+    return str.trim()
+      .replace(/[^\x20-\x7E]/g, "") // Remove non-printable/hidden chars
+      .replace(/\s+/g, ""); // Remove any internal spaces
+  };
 
-  // Safe trim
-  apiKey = typeof apiKey === 'string' ? apiKey.trim() : apiKey;
-  apiSecret = typeof apiSecret === 'string' ? apiSecret.trim() : apiSecret;
+  apiKey = sanitize(apiKey);
+  apiSecret = sanitize(apiSecret);
+
+  console.log(`[Server] Connection attempt for ${exchangeName}. Key length: ${apiKey?.length}`);
 
   if (!apiKey || !apiSecret) {
-    return res.status(400).json({ error: "API Key and API Secret are required." });
+    return res.status(400).json({ error: "API Key and API Secret are required and must be valid strings." });
   }
 
   const selectedExchange = exchangeName || "Gate.io";
   let status: "CONNECTED" | "ERROR" = "CONNECTED";
   let permissions = ["SPOT", "READ", "TRADE"];
 
-  // Normalize exchange name for matching
   const isGate = /gate/i.test(selectedExchange);
 
-  // Validate credentials with exchange if Gate.io
   if (isGate) {
-    console.log(`[GateAuth] Attempting validation for ${apiKey.substring(0, 4)}...`);
+    console.log(`[GateAuth] Validating key: ${apiKey.substring(0, 4)}...`);
     try {
-      // Basic sanity check on key format before calling API
       if (apiKey.length < 16 || apiSecret.length < 16) {
-        throw new Error("API Key or Secret appears too short. Please ensure you copied the full strings from Gate.io.");
+        throw new Error("API Key or Secret appears too short. Gate.io keys are typically 32+ characters.");
       }
 
+      console.log(`[GateAuth] Creating client for ${apiKey.substring(0, 4)}...`);
       const testClient = new ApiClient();
-      // Ensure we use the correct production base path
-      testClient.basePath = 'https://api.gateio.ws/api/v4';
+      testClient.basePath = 'https://api.gateio.ws/api/v4'; // Explicitly set production endpoint
       testClient.setApiKeySecret(apiKey, apiSecret);
-      const testSpotApi = new SpotApi(testClient);
       
-      console.log(`[GateAuth] Calling listSpotAccounts...`);
-      // Perform real test request to verify credentials
-      // We use a small timeout to avoid hanging
-      const response = await Promise.race([
-        testSpotApi.listSpotAccounts(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Authentication request timed out")), 8000))
-      ]) as any;
+      let testSpotApi;
+      try {
+        testSpotApi = new SpotApi(testClient);
+      } catch (constrErr: any) {
+        throw new Error(`Failed to initialize Gate.io SDK: ${constrErr.message}`);
+      }
+      
+      // Use a shorter timeout to stay well within platform execution limits (e.g. Vercel 10s limit)
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Exchange response timed out (8s). Gate.io might be slow or your IP is restricted.")), 8000)
+      );
 
-      console.log(`[GateAuth] Success: Received ${response?.body?.length || 0} accounts`);
+      console.log(`[GateAuth] Validating with listSpotAccounts...`);
+      const apiPromise = testSpotApi.listSpotAccounts();
       
-      // Upgrade global spotApi with verified credentials
+      const response = await Promise.race([apiPromise, timeoutPromise]) as any;
+
+      if (!response) {
+        throw new Error("No response from Gate.io (NULL)");
+      }
+
+      console.log(`[GateAuth] Response received. Status: ${response.status || response.statusCode}, Body present: ${!!response.body}`);
+      
+      if (!response.body) {
+        throw new Error("Received empty response body from Gate.io. Check your API permissions.");
+      }
+
+      const accountCount = Array.isArray(response.body) ? response.body.length : 0;
+      console.log(`[GateAuth] Success: ${accountCount} accounts found`);
+      
+      // Persist global credentials
       gateClient = testClient;
       spotApi = testSpotApi;
       process.env.GATE_API_KEY = apiKey;
       process.env.GATE_API_SECRET = apiSecret;
       
     } catch (err: any) {
-      console.error("[GateAuth] Validation error type:", typeof err, "message:", err?.message);
-      const errorDetail = err?.response?.body?.label || err?.response?.body?.message || err?.message || "Invalid API key or secret";
-      console.error("[GateAuth] Validation failed detail:", errorDetail);
+      console.error("[GateAuth] Error:", err.name, err.message);
       
-      return res.status(400).json({ 
-        error: `Gate.io authentication failed: ${errorDetail}` 
+      let errorDetail = "Invalid API key or secret";
+      
+      if (err.response && err.response.body) {
+        errorDetail = err.response.body.label || err.response.body.message || errorDetail;
+      } else if (err.message) {
+        errorDetail = err.message;
+      }
+      
+      return res.status(401).json({ 
+        error: `Authentication failed: ${errorDetail}. Tip: Ensure you have 'Spot Trading' and 'Read' permissions enabled on your Gate.io API key.`
       });
     }
   }
@@ -783,62 +971,42 @@ app.post("/api/kill-switch", (req, res) => {
 
 function calculateLiveReadiness() {
   const currentDb = readDb();
-  const connectedAccount = currentDb.exchangeAccounts.find((ex: any) => ex.status === "CONNECTED");
-  
-  const exchangeConnected = Boolean(connectedAccount);
-  const credentialsValid = Boolean(spotApi || process.env.GATE_API_KEY);
+  const envReady = !!(process.env.GATE_API_KEY && process.env.GATE_API_SECRET);
+  const apiReady = !!spotApi;
+  const killSwitch = !!currentDb.riskSettings.killSwitchActive;
   
   const now = Date.now();
-  let marketDataAvailable = false;
+  let marketStatus = "OFFLINE";
   let marketDataDetail = "";
-  
-  const wsConnected = gateWSManager.status === 'CONNECTED';
-  const lastMsgAge = now - gateWSManager.lastMessageTimestamp;
-  const dataStale = lastMsgAge > 10000;
-
-  if (wsConnected && !dataStale) {
-    marketDataAvailable = true;
+  if (gateWSManager.lastMessageTimestamp) {
+    const age = now - gateWSManager.lastMessageTimestamp;
+    marketStatus = age < 5000 ? "LIVE" : "STALE";
+    if (age >= 5000) marketDataDetail = `Market data is stale (${Math.floor(age/1000)}s old).`;
+  } else if (process.env.VERCEL) {
+     marketStatus = "REST_READY";
   } else {
-    if (!wsConnected) {
-      marketDataDetail = `WebSocket disconnected (${gateWSManager.status}). ${gateWSManager.lastError || ''}`;
-    } else if (dataStale) {
-      marketDataDetail = `Market data is stale. Last message received ${Math.floor(lastMsgAge / 1000)}s ago.`;
-    }
+     marketDataDetail = "No market data received from WebSocket yet.";
   }
-
-  const accountAccessible = Boolean(connectedAccount && (spotApi || process.env.GATE_API_KEY));
-  const tradingPermission = Boolean(connectedAccount?.permissions?.some((p: string) => ["SPOT", "TRADE", "MARGIN"].includes(p)));
-  const riskManagementConfigured = Boolean(currentDb.riskSettings && currentDb.riskSettings.maxTradeSizeUsd > 0);
-  const killSwitchAvailable = Boolean(!currentDb.riskSettings?.killSwitchActive);
-
-  let reason: string | null = null;
-  if (!exchangeConnected) {
-    reason = "No verified exchange connection. Connect Gate.io or another supported exchange in Exchange Connections.";
-  } else if (!credentialsValid || !accountAccessible) {
-    reason = "Exchange API credentials failed authentication or session expired.";
-  } else if (!tradingPermission) {
-    reason = "Connected exchange account lacks SPOT or TRADE order execution permission.";
-  } else if (!marketDataAvailable) {
-    reason = `Live market data feed is offline or stale. ${marketDataDetail}`;
-  } else if (!riskManagementConfigured) {
-    reason = "Risk settings are unconfigured or maximum trade size is zero.";
-  } else if (!killSwitchAvailable) {
-    reason = "Emergency Kill Switch is currently ACTIVE. Deactivate kill switch to enable live trading.";
-  }
-
-  const ready = exchangeConnected && credentialsValid && accountAccessible && tradingPermission && marketDataAvailable && riskManagementConfigured && killSwitchAvailable;
-
+  
+  const isReady = envReady && apiReady && !killSwitch && (marketStatus === "LIVE" || marketStatus === "REST_READY");
+  
+  let reason = null;
+  if (!envReady) reason = "Environment variables GATE_API_KEY/SECRET are missing.";
+  else if (!apiReady) reason = "Gate.io API client failed to initialize.";
+  else if (killSwitch) reason = "Emergency Kill Switch is ACTIVE.";
+  else if (marketStatus === "OFFLINE") reason = "Market data feed is offline.";
+  
   return {
-    ready,
-    exchangeConnected,
-    credentialsValid,
-    marketDataAvailable,
-    accountAccessible,
-    tradingPermission,
-    riskManagementConfigured,
-    killSwitchAvailable,
-    reason: ready ? null : reason,
-    marketDataDetail
+    isReady,
+    ready: isReady, // Compatibility with older UI code
+    envReady,
+    apiReady,
+    marketStatus,
+    marketDataDetail,
+    killSwitch,
+    reason,
+    gateKeyMasked: process.env.GATE_API_KEY ? `${process.env.GATE_API_KEY.substring(0, 4)}...` : "NONE",
+    persistence: "FIRESTORE"
   };
 }
 
@@ -1176,6 +1344,7 @@ app.post("/api/execute-arbitrage", async (req, res) => {
       currentDb.auditLogs.unshift({
         id: `log-${now}`,
         action: "LIVE_ARBITRAGE_EXECUTED",
+        category: "TRADE",
         details: `Submitted live Gate.io order ${orderId} for pair ${leg1.symbol}`,
         timestamp: now,
         user: "admin"
@@ -1241,6 +1410,7 @@ app.post("/api/execute-arbitrage", async (req, res) => {
   currentDb.auditLogs.unshift({
     id: `log-${now}`,
     action: "PAPER_ARBITRAGE_EXECUTED",
+    category: "TRADE",
     details: `Executed paper arbitrage for ${opp.symbol}`,
     timestamp: now,
     user: "admin"
@@ -1348,24 +1518,40 @@ app.post("/api/deposit", async (req, res) => {
         amount: amount * 100, // Paystack expects kobo
         email: "user-1@apexquant.test",
         reference: reference,
-        callback_url: "http://localhost:3000/wallet" // Or wherever frontend is
+        callback_url: `${process.env.APP_URL || 'http://localhost:3000'}/wallet`
       });
       return res.json({ success: true, authorization_url: response.data.authorization_url, deposit });
-    } catch (err) {
+    } catch (err: any) {
       console.error("Paystack init error", err);
-      // Fallback for simulation if paystack fails or isn't fully set up in sandbox
-      return res.json({ success: true, deposit, warning: "Paystack initialization failed, using mock." });
+      return res.status(500).json({ 
+        error: "Failed to initialize Paystack payment. Please check your PAYSTACK_SECRET_KEY configuration.",
+        details: err?.message
+      });
     }
   }
 
-  res.json({ success: true, deposit });
+  res.status(503).json({ error: "Payment gateway unavailable. PAYSTACK_SECRET_KEY not configured." });
 });
+
+import crypto from "crypto";
 
 app.post("/api/webhook/paystack", (req, res) => {
   const currentDb = readDb();
-  // Mock Paystack webhook validation for production verification
+  
+  // Verify Paystack signature
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if (secret) {
+    const hash = crypto.createHmac('sha512', secret).update(JSON.stringify(req.body)).digest('hex');
+    if (hash !== req.headers['x-paystack-signature']) {
+      console.error("[Paystack] Webhook signature mismatch!");
+      return res.status(401).send('Invalid signature');
+    }
+  } else {
+    console.warn("[Paystack] WEBHOOK_SECRET_KEY missing, skipping verification (INSECURE)");
+  }
 
   const { event, data } = req.body;
+  console.log(`[Paystack] Webhook received: ${event} for ref ${data?.reference}`);
 
   if (event === "charge.success") {
     const deposit = currentDb.deposits.find((d: any) => d.reference === data.reference);
