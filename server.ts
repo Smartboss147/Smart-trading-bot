@@ -8,6 +8,7 @@ import Paystack from "@paystack/paystack-sdk";
 import cors from "cors";
 import * as admin from "firebase-admin";
 import { initializeApp, getApps, applicationDefault } from "firebase-admin/app";
+import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import firebase from "firebase/compat/app";
 import "firebase/compat/firestore";
 
@@ -48,17 +49,49 @@ if (!getApps().length) {
 const databaseId = firebaseConfig.firestoreDatabaseId || "(default)";
 let db_firestore: any;
 
+// Mock Firestore for fallback
+const mockFirestore = {
+  collection: (name: string) => ({
+    doc: (id: string) => ({
+      get: async () => ({ exists: false, data: () => null }),
+      set: async () => ({ success: true }),
+      update: async () => ({ success: true }),
+      delete: async () => ({ success: true })
+    }),
+    limit: (n: number) => ({
+      get: async () => ({ empty: true, size: 0, docs: [] })
+    }),
+    get: async () => ({ empty: true, size: 0, docs: [] }),
+    where: () => mockFirestore.collection(name),
+    orderBy: () => mockFirestore.collection(name),
+  })
+};
+
 try {
-  console.log(`[Firestore] Initializing Client Compat SDK for Project: ${firebaseConfig.projectId}, Database: ${databaseId}`);
-  if (!firebase.apps.length) {
-    firebase.initializeApp(firebaseConfig);
+  if (firebaseConfig.projectId) {
+    console.log(`[Firestore] Initializing Client Compat SDK for Project: ${firebaseConfig.projectId}, Database: ${databaseId}`);
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
+    db_firestore = firebase.firestore(firebase.app());
+    console.log(`[Firestore] Client SDK initialized successfully`);
+  } else {
+    throw new Error("No projectId in config");
   }
-  db_firestore = firebase.firestore(firebase.app());
-  console.log(`[Firestore] Client SDK initialized successfully`);
 } catch (e: any) {
-  console.warn(`[Firestore] Failed to initialize Client SDK: ${e.message}.`);
-  // Last resort: try admin but it will likely fail with PERMISSION_DENIED
-  db_firestore = admin.firestore();
+  console.warn(`[Firestore] Client SDK init failed: ${e.message}. Trying Admin SDK...`);
+  try {
+    const apps = getApps();
+    const adminApp = apps.length > 0 ? apps[0] : initializeApp({
+      projectId: firebaseConfig.projectId || "prefab-polymer-gj1d7",
+      credential: applicationDefault()
+    });
+    db_firestore = getAdminFirestore(adminApp, databaseId);
+    console.log(`[Firestore] Admin SDK initialized successfully`);
+  } catch (adminErr: any) {
+    console.error(`[Firestore] All initialization attempts failed: ${adminErr.message}`);
+    db_firestore = mockFirestore;
+  }
 }
 
 // Initialize external providers (they will fail gracefully if keys are missing)
@@ -102,9 +135,9 @@ app.use(async (req, res, next) => {
   const origin = req.headers.origin || "unknown";
   console.log(`[Server] ${req.method} ${req.url} from ${origin}`);
 
-  // Ensure DB is loaded (especially on Vercel)
-  if (!isDbLoaded && !req.url.includes('/api/health')) {
-    await syncFromFirestore();
+  // Ensure DB is loaded
+  if (!isDbLoaded && !isSyncing && !req.url.includes('/api/health')) {
+    syncFromFirestore().catch(err => console.error("[Firestore] Background sync failed:", err));
   }
   
   next();
@@ -168,8 +201,11 @@ const defaultDb = {
 
 let cachedDb = { ...defaultDb };
 let isDbLoaded = false;
+let isSyncing = false;
 
 async function syncFromFirestore() {
+  if (isSyncing) return;
+  isSyncing = true;
   try {
     console.log(`[Firestore] Starting sync process...`);
     const collections = ['riskSettings', 'exchangeAccounts', 'balances', 'orders', 'trades', 'auditLogs', 'ledger', 'deposits'];
@@ -191,7 +227,12 @@ async function syncFromFirestore() {
       const testSnap = await db_firestore.collection('settings').limit(1).get();
       console.log(`[Firestore] Connection successful. Found ${testSnap.size} docs.`);
     } catch (e: any) {
-      console.error(`[Firestore] Connection test failed [${databaseId}]: ${e.message}`);
+      if (e.message.includes("NOT_FOUND") || e.message.includes("PERMISSION_DENIED")) {
+        console.warn(`[Firestore] Connection test failed [${databaseId}]: ${e.message}. Switching to local mock mode.`);
+      } else {
+        console.error(`[Firestore] Connection test failed [${databaseId}]: ${e.message}`);
+      }
+      db_firestore = mockFirestore;
       console.log("[Firestore] Continuing with local data mode.");
       return;
     }
@@ -224,6 +265,8 @@ async function syncFromFirestore() {
     console.log("[Firestore] Data synchronization complete");
   } catch (e: any) {
     console.error("[Firestore] syncFromFirestore fatal error:", e.message);
+  } finally {
+    isSyncing = false;
   }
 }
 
