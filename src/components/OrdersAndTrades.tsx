@@ -15,11 +15,11 @@ export function OrdersAndTrades({ orders, trades }: OrdersAndTradesProps) {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Cpu className="w-5 h-5 text-cyan-400" />
-            <h2 className="font-bold text-slate-100 text-base">Active Open Orders ({orders.filter(o => o.status === "OPEN").length})</h2>
+            <h2 className="font-bold text-slate-100 text-base">Active Open Orders ({(orders || []).filter(o => o.status === "OPEN").length})</h2>
           </div>
         </div>
 
-        {orders.length === 0 ? (
+        {(!orders || orders.length === 0) ? (
           <div className="text-center py-8 text-slate-500 text-xs">No active or historical orders found.</div>
         ) : (
           <div className="overflow-x-auto">
@@ -38,7 +38,7 @@ export function OrdersAndTrades({ orders, trades }: OrdersAndTradesProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {orders.map(o => (
+                {(orders || []).map(o => (
                   <tr key={o.id} className="hover:bg-slate-800/40">
                     <td className="py-2.5 px-3 text-cyan-400">{o.id}</td>
                     <td className="py-2.5 px-3 text-center">
@@ -70,11 +70,11 @@ export function OrdersAndTrades({ orders, trades }: OrdersAndTradesProps) {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-            <h2 className="font-bold text-slate-100 text-base">Executed Trade Audit Trail ({trades.length})</h2>
+            <h2 className="font-bold text-slate-100 text-base">Executed Trade Audit Trail ({(trades || []).length})</h2>
           </div>
         </div>
 
-        {trades.length === 0 ? (
+        {(!trades || trades.length === 0) ? (
           <div className="text-center py-8 text-slate-500 text-xs">No completed trades recorded yet.</div>
         ) : (
           <div className="overflow-x-auto">
@@ -94,7 +94,7 @@ export function OrdersAndTrades({ orders, trades }: OrdersAndTradesProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {trades.map(t => (
+                {(trades || []).map(t => (
                   <tr key={t.id} className="hover:bg-slate-800/40">
                     <td className="py-2.5 px-3 text-cyan-400">{t.id}</td>
                     <td className="py-2.5 px-3 text-center">

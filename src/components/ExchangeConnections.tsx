@@ -53,7 +53,7 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
         </button>
       </div>
 
-      {exchanges.length === 0 ? (
+      {(!exchanges || exchanges.length === 0) ? (
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-12 text-center flex flex-col items-center justify-center space-y-4">
           <div className="w-12 h-12 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400">
             <Key className="w-6 h-6" />
@@ -117,7 +117,7 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
                   </div>
                   <div className="flex justify-between bg-slate-950 p-2 rounded border border-slate-800">
                     <span>Permissions:</span>
-                    <span className="text-cyan-400">{ex.permissions.join(", ") || "None"}</span>
+                    <span className="text-cyan-400">{(ex.permissions || []).join(", ") || "None"}</span>
                   </div>
                 </div>
 
@@ -133,7 +133,7 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
                 <span className="flex items-center gap-1">
                   <Shield className="w-3.5 h-3.5 text-emerald-400" /> Encrypted Vault
                 </span>
-                <span>Last Sync: {new Date(ex.lastSync).toLocaleTimeString()}</span>
+                <span>Last Sync: {ex.lastSync ? new Date(ex.lastSync).toLocaleTimeString() : "Never"}</span>
               </div>
             </div>
           ))}

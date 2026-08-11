@@ -44,7 +44,7 @@ export function ArbitrageScanner({ opportunities, riskSettings, onExecuteOpportu
         </div>
       )}
 
-      {opportunities.length === 0 ? (
+      {(!opportunities || opportunities.length === 0) ? (
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-16 text-center">
           <Zap className="w-10 h-10 mx-auto text-slate-600 mb-3 animate-pulse" />
           <h3 className="font-bold text-slate-300 text-base">Scanning Order Books for Profitable Spreads...</h3>
@@ -52,7 +52,7 @@ export function ArbitrageScanner({ opportunities, riskSettings, onExecuteOpportu
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {opportunities.map(opp => (
+          {(opportunities || []).map(opp => (
             <div
               key={opp.id}
               className="bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col justify-between hover:border-cyan-500/40 transition-all shadow-lg"

@@ -10,7 +10,7 @@ interface TradingTerminalProps {
 }
 
 export function TradingTerminal({ markets, selectedMarket, onSelectMarket }: TradingTerminalProps) {
-  const currentMarket = selectedMarket || markets[0] || {
+  const currentMarket = selectedMarket || (markets && markets.length > 0 ? markets[0] : null) || {
     symbol: "BTCUSDT",
     bid: 94000,
     ask: 94015,
@@ -44,12 +44,12 @@ export function TradingTerminal({ markets, selectedMarket, onSelectMarket }: Tra
             <select
               value={currentMarket.symbol}
               onChange={e => {
-                const found = markets.find(m => m.symbol === e.target.value);
+                const found = (markets || []).find(m => m.symbol === e.target.value);
                 if (found) onSelectMarket(found);
               }}
               className="bg-slate-950 border border-slate-800 text-slate-100 font-bold px-3 py-1.5 rounded text-sm focus:outline-none focus:border-cyan-500"
             >
-              {markets.map(m => (
+              {(markets || []).map(m => (
                 <option key={`${m.exchange}-${m.symbol}`} value={m.symbol}>
                   {m.symbol} ({m.exchange})
                 </option>

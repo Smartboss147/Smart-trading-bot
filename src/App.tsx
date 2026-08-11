@@ -110,22 +110,29 @@ export default function App() {
 
       const results = [];
       for (const ep of endpoints) {
-        console.log(`[App] Fetching ${ep}...`);
-        const res = await safeFetchJson(ep);
-        console.log(`[App] Fetched ${ep}:`, res.ok ? "OK" : "FAILED", res.error || "");
-        results.push(res);
+        try {
+          console.log(`[App] Fetching ${ep}...`);
+          const res = await safeFetchJson(ep);
+          console.log(`[App] Fetched ${ep}:`, res.ok ? "OK" : "FAILED", res.error || "");
+          results.push(res);
+        } catch (epErr: any) {
+          console.error(`[App] Endpoint ${ep} crashed:`, epErr);
+          results.push({ ok: false, error: epErr.message });
+        }
       }
 
-      if (results[0].ok && results[0].data) setMarkets(results[0].data);
-      if (results[1].ok && results[1].data) setOpportunities(results[1].data);
-      if (results[2].ok && results[2].data) setOrders(results[2].data);
-      if (results[3].ok && results[3].data) setTrades(results[3].data);
-      if (results[4].ok && results[4].data) setBalances(results[4].data);
+      if (results[0].ok && Array.isArray(results[0].data)) setMarkets(results[0].data);
+      if (results[1].ok && Array.isArray(results[1].data)) setOpportunities(results[1].data);
+      if (results[2].ok && Array.isArray(results[2].data)) setOrders(results[2].data);
+      if (results[3].ok && Array.isArray(results[3].data)) setTrades(results[3].data);
+      if (results[4].ok && Array.isArray(results[4].data)) setBalances(results[4].data);
       if (results[5].ok && results[5].data) setRiskSettings(results[5].data);
-      if (results[6].ok && results[6].data) setExchangeAccounts(results[6].data);
-      if (results[7].ok && results[7].data) setAuditLogs(results[7].data);
+      if (results[6].ok && Array.isArray(results[6].data)) setExchangeAccounts(results[6].data);
+      if (results[7].ok && Array.isArray(results[7].data)) setAuditLogs(results[7].data);
       if (results[8].ok && results[8].data) setAnalytics(results[8].data);
       if (results[9].ok && results[9].data) setLiveReadiness(results[9].data);
+    } catch (globalErr: any) {
+      console.error("[App] fetchData global error:", globalErr);
     } finally {
       isFetchingRef.current = false;
     }
@@ -219,7 +226,7 @@ export default function App() {
     fetchData();
   };
 
-  const totalBalanceUsd = balances.reduce((acc, b) => acc + (b.usdValue || 0), 0);
+  const totalBalanceUsd = (balances || []).reduce((acc, b) => acc + (b?.usdValue || 0), 0);
 
   if (activeTab === "ipad") {
     return (

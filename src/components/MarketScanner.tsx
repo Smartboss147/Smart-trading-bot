@@ -12,12 +12,15 @@ export function MarketScanner({ markets, onSelectMarket }: MarketScannerProps) {
   const [sortBy, setSortBy] = useState<keyof Market>("volume24h");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
-  const filteredMarkets = markets.filter(m => 
-    m.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    m.exchange.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredMarkets = (markets || []).filter(m => 
+    m && m.symbol && (
+      m.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (m.exchange && m.exchange.toLowerCase().includes(searchTerm.toLowerCase()))
+    )
   ).sort((a, b) => {
     let aVal = a[sortBy];
     let bVal = b[sortBy];
+    if (aVal === undefined || bVal === undefined) return 0;
     if (typeof aVal === "string") {
       return sortOrder === "asc" ? (aVal as string).localeCompare(bVal as string) : (bVal as string).localeCompare(aVal as string);
     }

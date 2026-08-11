@@ -11,7 +11,7 @@ interface DashboardOverviewProps {
 }
 
 export function DashboardOverview({ balances, opportunities, systemHealth, analytics, onSelectTab }: DashboardOverviewProps) {
-  const totalBalance = balances.reduce((acc, b) => acc + (b.usdValue || 0), 0);
+  const totalBalance = (balances || []).reduce((acc, b) => acc + (b.usdValue || 0), 0);
 
   return (
     <div className="space-y-6">
@@ -50,11 +50,11 @@ export function DashboardOverview({ balances, opportunities, systemHealth, analy
             <Zap className="w-4 h-4 text-amber-400" />
           </div>
           <div className="text-2xl font-mono font-bold text-amber-400">
-            {opportunities.length} Live
+            {(opportunities || []).length} Live
           </div>
           <div className="text-xs text-slate-400 mt-2">
             Max Net Edge: <span className="text-cyan-400 font-mono font-semibold">
-              {opportunities.length > 0 ? Math.max(...opportunities.map(o => o.netEdgePercent)).toFixed(2) : "0.00"}%
+              {(opportunities || []).length > 0 ? Math.max(...(opportunities || []).map(o => o.netEdgePercent)).toFixed(2) : "0.00"}%
             </span>
           </div>
         </div>
@@ -91,14 +91,14 @@ export function DashboardOverview({ balances, opportunities, systemHealth, analy
             </button>
           </div>
 
-          {opportunities.length === 0 ? (
+          {(!opportunities || opportunities.length === 0) ? (
             <div className="text-center py-12 text-slate-500">
               <Activity className="w-8 h-8 mx-auto mb-2 opacity-40 animate-pulse" />
               <p>Scanning 50+ markets for profitable spreads...</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {opportunities.slice(0, 5).map(opp => (
+              {(opportunities || []).slice(0, 5).map(opp => (
                 <div key={opp.id} className="bg-slate-950 border border-slate-800 rounded p-3.5 flex items-center justify-between hover:border-cyan-500/40 transition-all">
                   <div>
                     <div className="flex items-center gap-2">
