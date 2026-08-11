@@ -965,6 +965,57 @@ app.post("/api/exchanges", async (req, res) => {
   res.json({ success: true, exchange: accountObj });
 });
 
+app.post("/api/exchanges/refresh", async (req, res) => {
+  const currentDb = readDb();
+  
+  if (!spotApi) {
+    return res.status(400).json({ 
+      error: "No active session found. Please re-authenticate your exchange to verify status." 
+    });
+  }
+
+  try {
+    console.log(`[Server] Manual status refresh triggered for active session...`);
+    const response = await spotApi.listSpotAccounts() as any;
+    
+    if (response && response.body) {
+      currentDb.exchangeAccounts = currentDb.exchangeAccounts.map((ex: any) => {
+        if (/gate/i.test(ex.exchangeName)) {
+          return {
+            ...ex,
+            status: "CONNECTED",
+            lastSync: Date.now(),
+            lastError: null
+          };
+        }
+        return ex;
+      });
+      
+      writeDb(currentDb);
+      return res.json({ ok: true, message: "Connection verified successfully." });
+    } else {
+      throw new Error("Empty response from exchange");
+    }
+  } catch (err: any) {
+    console.error("[Server] Manual refresh failed:", err.message);
+    
+    currentDb.exchangeAccounts = currentDb.exchangeAccounts.map((ex: any) => {
+      if (/gate/i.test(ex.exchangeName)) {
+        return {
+          ...ex,
+          status: "ERROR",
+          lastSync: Date.now(),
+          lastError: err.message
+        };
+      }
+      return ex;
+    });
+    
+    writeDb(currentDb);
+    return res.status(401).json({ error: "Verification failed. Your API keys may have expired or been revoked." });
+  }
+});
+
 app.delete("/api/exchanges/:id", (req, res) => {
   const currentDb = readDb();
   const id = req.params.id;

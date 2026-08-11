@@ -330,6 +330,7 @@ export default function App() {
             exchanges={exchangeAccounts}
             onAddExchange={handleAddExchange}
             onDeleteExchange={handleDeleteExchange}
+            onRefresh={fetchData}
           />
         )}
         {activeTab === "admin" && (

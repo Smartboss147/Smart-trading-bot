@@ -6,15 +6,56 @@ interface ExchangeConnectionsProps {
   exchanges: ExchangeAccount[];
   onAddExchange: (exchangeName: string, apiKey: string, apiSecret: string) => Promise<{ success: boolean; error?: string }>;
   onDeleteExchange?: (id: string) => Promise<void>;
+  onRefresh?: () => void;
 }
 
-export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange }: ExchangeConnectionsProps) {
+export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange, onRefresh }: ExchangeConnectionsProps) {
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editingExchange, setEditingExchange] = useState<ExchangeAccount | null>(null);
   const [exchangeName, setExchangeName] = useState("Gate.io");
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      const response = await fetch("/api/exchanges/refresh", {
+        method: "POST"
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        alert(data.error || "Failed to refresh accounts.");
+      } else {
+        if (onRefresh) onRefresh();
+      }
+    } catch (err) {
+      console.error("Refresh error:", err);
+      alert("Network error while refreshing accounts.");
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const handleOpenAdd = () => {
+    setEditingExchange(null);
+    setExchangeName("Gate.io");
+    setApiKey("");
+    setApiSecret("");
+    setSubmitError(null);
+    setShowAddModal(true);
+  };
+
+  const handleOpenUpdate = (ex: ExchangeAccount) => {
+    setEditingExchange(ex);
+    setExchangeName(ex.exchangeName);
+    setApiKey(""); // Don't show old key
+    setApiSecret("");
+    setSubmitError(null);
+    setShowAddModal(true);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,6 +71,7 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
       setApiKey("");
       setApiSecret("");
       setShowAddModal(false);
+      setEditingExchange(null);
     } else {
       setSubmitError(result.error || "Authentication failed. Please check your credentials.");
     }
@@ -42,15 +84,22 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
           <h2 className="text-base font-bold text-slate-100">Exchange API Connections</h2>
           <p className="text-xs text-slate-400 mt-1">Credentials are securely encrypted server-side and tested against live API endpoints before activation.</p>
         </div>
-        <button
-          onClick={() => {
-            setSubmitError(null);
-            setShowAddModal(true);
-          }}
-          className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs uppercase tracking-wider rounded flex items-center gap-1.5 shadow-lg shadow-cyan-600/20"
-        >
-          <Plus className="w-4 h-4" /> Add Exchange
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing || exchanges.length === 0}
+            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs uppercase tracking-wider rounded flex items-center gap-1.5 border border-slate-700 disabled:opacity-50 transition-all"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`} /> 
+            {isRefreshing ? "Refreshing..." : "Refresh Status"}
+          </button>
+          <button
+            onClick={handleOpenAdd}
+            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs uppercase tracking-wider rounded flex items-center gap-1.5 shadow-lg shadow-cyan-600/20 transition-all"
+          >
+            <Plus className="w-4 h-4" /> Add Exchange
+          </button>
+        </div>
       </div>
 
       {(!exchanges || exchanges.length === 0) ? (
@@ -65,10 +114,7 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
             </p>
           </div>
           <button
-            onClick={() => {
-              setSubmitError(null);
-              setShowAddModal(true);
-            }}
+            onClick={handleOpenAdd}
             className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs uppercase tracking-wider rounded flex items-center gap-1.5 shadow-lg shadow-cyan-600/20"
           >
             <Plus className="w-4 h-4" /> Add Exchange
@@ -98,15 +144,24 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
                       <span className={`w-1.5 h-1.5 rounded-full ${ex.status === "CONNECTED" ? "bg-emerald-400" : "bg-rose-400"}`} />
                       {ex.status}
                     </span>
-                    {onDeleteExchange && (
+                    <div className="flex items-center gap-1">
                       <button
-                        onClick={() => onDeleteExchange(ex.id)}
-                        className="p-1 text-slate-500 hover:text-rose-400 transition-colors"
-                        title="Disconnect Exchange"
+                        onClick={() => handleOpenUpdate(ex)}
+                        className="p-1 text-slate-500 hover:text-cyan-400 transition-colors"
+                        title="Update Keys / Re-authenticate"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <RefreshCw className="w-4 h-4" />
                       </button>
-                    )}
+                      {onDeleteExchange && (
+                        <button
+                          onClick={() => onDeleteExchange(ex.id)}
+                          className="p-1 text-slate-500 hover:text-rose-400 transition-colors"
+                          title="Disconnect Exchange"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -142,8 +197,11 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
 
       {showAddModal && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-lg max-w-md w-full p-6 space-y-4">
-            <h3 className="text-base font-bold text-slate-100">Connect New Exchange</h3>
+          <div className="bg-slate-900 border border-slate-800 rounded-lg max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+              {editingExchange ? <RefreshCw className="w-4 h-4 text-cyan-400" /> : <Plus className="w-4 h-4 text-cyan-400" />}
+              {editingExchange ? `Update ${editingExchange.exchangeName} Connection` : "Connect New Exchange"}
+            </h3>
             
             {submitError && (
               <div className="bg-rose-950/50 border border-rose-800 p-3 rounded text-xs text-rose-200 flex items-start gap-2">
@@ -161,7 +219,7 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
                 <select
                   value={exchangeName}
                   onChange={e => setExchangeName(e.target.value)}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || !!editingExchange}
                   className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500 disabled:opacity-50"
                 >
                   <option value="Gate.io">Gate.io (Live Spot Supported)</option>
@@ -170,9 +228,12 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
                   <option value="Kraken">Kraken</option>
                   <option value="OKX">OKX</option>
                 </select>
+                {editingExchange && (
+                  <p className="text-[10px] text-slate-500 mt-1">Exchange selection is locked for updates. To change exchanges, delete this connection and add a new one.</p>
+                )}
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-400 uppercase mb-1">API Key</label>
+                <label className="block text-xs font-medium text-slate-400 uppercase mb-1">New API Key</label>
                 <input
                   type="text"
                   required
@@ -184,7 +245,7 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-400 uppercase mb-1">API Secret</label>
+                <label className="block text-xs font-medium text-slate-400 uppercase mb-1">New API Secret</label>
                 <input
                   type="password"
                   required
@@ -199,7 +260,10 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
                 <button
                   type="button"
                   disabled={isSubmitting}
-                  onClick={() => setShowAddModal(false)}
+                  onClick={() => {
+                    setShowAddModal(false);
+                    setEditingExchange(null);
+                  }}
                   className="px-4 py-2 bg-slate-800 text-slate-300 rounded text-xs font-bold disabled:opacity-50"
                 >
                   Cancel
@@ -210,13 +274,14 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
                   className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-xs font-bold flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {isSubmitting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-                  {isSubmitting ? "Authenticating..." : "Connect Securely"}
+                  {isSubmitting ? "Updating..." : (editingExchange ? "Update Credentials" : "Connect Securely")}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
+
     </div>
   );
 }
