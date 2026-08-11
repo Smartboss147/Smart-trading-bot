@@ -15,13 +15,14 @@ export async function safeFetchJson<T = any>(
       console.warn("[API] Could not determine window.location.origin");
     }
 
-    const fullUrl = url;
+    const fullUrl = url.startsWith("/") ? `${origin}${url}` : url;
     
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 seconds timeout
 
     const fetchOptions: RequestInit = {
       ...options,
+      credentials: "include", // Required for AI Studio authentication proxy
       signal: controller.signal,
       headers: {
         'Accept': 'application/json',
@@ -69,7 +70,8 @@ export async function safeFetchJson<T = any>(
     }
 
     if (!res.ok) {
-      const errorMsg = jsonBody?.error || jsonBody?.message || `Server error (${res.status})`;
+      let rawError = jsonBody?.error || jsonBody?.message || `Server error (${res.status})`;
+      let errorMsg = typeof rawError === 'string' ? rawError : (rawError?.message || JSON.stringify(rawError));
       return { ok: false, status: res.status, data: jsonBody, error: errorMsg };
     }
 

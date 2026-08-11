@@ -177,15 +177,12 @@ export default function App() {
         "/api/trading/live-readiness"
       ];
 
-      // Fetch all in parallel to prevent blocking
-      const resultPromises = endpoints.map(ep => safeFetchJson(ep));
-      const settlements = await Promise.allSettled(resultPromises);
-      
-      const results = settlements.map((s, i) => {
-        if (s.status === "fulfilled") return s.value;
-        console.error(`[App] Settlement failed for ${endpoints[i]}:`, s.reason);
-        return { ok: false, error: String(s.reason) };
-      });
+      // Fetch sequentially to prevent AI Studio proxy rate limits (Load failed)
+      const results = [];
+      for (const ep of endpoints) {
+        const res = await safeFetchJson(ep);
+        results.push(res);
+      }
 
       // Defensive updates with null checks
       if (results[0].ok && Array.isArray(results[0].data)) setMarkets(results[0].data);
