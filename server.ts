@@ -908,118 +908,131 @@ app.get("/api/diagnostics", (req, res) => {
 });
 
 app.post("/api/exchanges", async (req, res) => {
-  const currentDb = readDb();
-  let { exchangeName, apiKey, apiSecret } = req.body;
-  
-  // Robust sanitization for keys often copied with invisible characters
-  const sanitize = (str: any) => {
-    if (typeof str !== 'string') return "";
-    return str.trim()
-      .replace(/[^\x20-\x7E]/g, "") // Remove non-printable/hidden chars
-      .replace(/\s+/g, ""); // Remove any internal spaces
-  };
+  try {
+    const currentDb = readDb();
+    let { exchangeName, apiKey, apiSecret } = req.body;
+    
+    // Robust sanitization for keys often copied with invisible characters
+    const sanitize = (str: any) => {
+      if (typeof str !== 'string') return "";
+      return str.trim()
+        .replace(/[^\x20-\x7E]/g, "") // Remove non-printable/hidden chars
+        .replace(/\s+/g, ""); // Remove any internal spaces
+    };
 
-  apiKey = sanitize(apiKey);
-  apiSecret = sanitize(apiSecret);
+    apiKey = sanitize(apiKey);
+    apiSecret = sanitize(apiSecret);
 
-  console.log(`[Server] Connection attempt for ${exchangeName}. Key length: ${apiKey?.length}`);
+    console.log(`[Server] Connection attempt for ${exchangeName}. Key length: ${apiKey?.length}`);
 
-  if (!apiKey || !apiSecret) {
-    return res.status(400).json({ error: "API Key and API Secret are required and must be valid strings." });
-  }
+    if (!apiKey || !apiSecret) {
+      return res.status(400).json({ error: "API Key and API Secret are required and must be valid strings." });
+    }
 
-  const selectedExchange = exchangeName || "Gate.io";
-  let status: "CONNECTED" | "ERROR" = "CONNECTED";
-  let permissions = ["SPOT", "READ", "TRADE"];
+    const selectedExchange = exchangeName || "Gate.io";
+    let status: "CONNECTED" | "ERROR" = "CONNECTED";
+    let permissions = ["SPOT", "READ", "TRADE"];
 
-  const isGate = /gate/i.test(selectedExchange);
+    const isGate = /gate/i.test(selectedExchange);
 
-  if (isGate) {
-    console.log(`[GateAuth] Validating key: ${apiKey.substring(0, 4)}...`);
-    try {
-      console.log(`[GateAuth] Creating client for ${apiKey.substring(0, 4)}...`);
-      const testClient = new ApiClient();
-      testClient.basePath = 'https://api.gateio.ws/api/v4'; 
-      testClient.setApiKeySecret(apiKey, apiSecret);
-      
-      let testSpotApi;
+    if (isGate) {
+      console.log(`[GateAuth] Validating key: ${apiKey.substring(0, 4)}...`);
       try {
-        testSpotApi = new SpotApi(testClient);
-      } catch (constrErr: any) {
-        throw new Error(`Failed to initialize Gate.io SDK: ${constrErr.message}`);
-      }
-      
-      // Internal timeout for the API call - reduced to 8s to stay safe within platform limits
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Exchange response timed out (8s). Gate.io might be slow or your IP is restricted.")), 8000)
-      );
+        console.log(`[GateAuth] Creating client for ${apiKey.substring(0, 4)}...`);
+        const testClient = new ApiClient();
+        testClient.basePath = 'https://api.gateio.ws/api/v4'; 
+        testClient.setApiKeySecret(apiKey, apiSecret);
+        
+        let testSpotApi;
+        try {
+          testSpotApi = new SpotApi(testClient);
+        } catch (constrErr: any) {
+          throw new Error(`Failed to initialize Gate.io SDK: ${constrErr.message}`);
+        }
+        
+        // Internal timeout for the API call - reduced to 8s to stay safe within platform limits
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Exchange response timed out (8s). Gate.io might be slow or your IP is restricted.")), 8000)
+        );
 
-      console.log(`[GateAuth] Validating with listSpotAccounts...`);
-      const apiPromise = testSpotApi.listSpotAccounts();
-      
-      const response = await Promise.race([apiPromise, timeoutPromise]) as any;
+        console.log(`[GateAuth] Validating with listSpotAccounts...`);
+        const apiPromise = testSpotApi.listSpotAccounts();
+        
+        const response = await Promise.race([apiPromise, timeoutPromise]) as any;
 
-      if (!response || !response.body) {
-        throw new Error("Received empty or invalid response from Gate.io. Check your API permissions.");
-      }
+        if (!response || !response.body) {
+          throw new Error("Received empty or invalid response from Gate.io. Check your API permissions.");
+        }
 
-      const accountCount = Array.isArray(response.body) ? response.body.length : 0;
-      console.log(`[GateAuth] Success: ${accountCount} accounts found`);
-      
-      // Set active session
-      gateClient = testClient;
-      spotApi = testSpotApi;
-      
-    } catch (err: any) {
-      console.warn("[GateAuth] Validation warning (saving credentials anyway for robust trading):", err.message);
-      
-      // Initialize client anyway so trading/execution works
-      try {
-        const fallbackClient = new ApiClient();
-        fallbackClient.basePath = 'https://api.gateio.ws/api/v4';
-        fallbackClient.setApiKeySecret(apiKey, apiSecret);
-        gateClient = fallbackClient;
-        spotApi = new SpotApi(gateClient);
-      } catch (e) {
-        console.error("[GateAuth] Fallback client init failed:", e);
+        const accountCount = Array.isArray(response.body) ? response.body.length : 0;
+        console.log(`[GateAuth] Success: ${accountCount} accounts found`);
+        
+        // Set active session
+        gateClient = testClient;
+        spotApi = testSpotApi;
+        
+      } catch (err: any) {
+        console.warn("[GateAuth] Validation warning (saving credentials anyway for robust trading):", err.message);
+        
+        // Initialize client anyway so trading/execution works
+        try {
+          const fallbackClient = new ApiClient();
+          fallbackClient.basePath = 'https://api.gateio.ws/api/v4';
+          fallbackClient.setApiKeySecret(apiKey, apiSecret);
+          gateClient = fallbackClient;
+          spotApi = new SpotApi(gateClient);
+        } catch (e) {
+          console.error("[GateAuth] Fallback client init failed:", e);
+        }
       }
     }
+
+    const maskedKey = `${apiKey.substring(0, 4)}••••••••${apiKey.substring(Math.max(0, apiKey.length - 4))}`;
+
+    if (!currentDb.exchangeAccounts) {
+      currentDb.exchangeAccounts = [];
+    }
+
+    // Check if exchange account already exists and update, or add new
+    const existingIdx = currentDb.exchangeAccounts.findIndex((ex: any) => ex.exchangeName === selectedExchange);
+    const accountObj = {
+      id: existingIdx >= 0 ? currentDb.exchangeAccounts[existingIdx].id : `ex-${Date.now()}`,
+      exchangeName: selectedExchange,
+      apiKeyMasked: maskedKey,
+      apiKey, // Save actual key
+      apiSecret, // Save actual secret
+      status,
+      permissions,
+      lastSync: Date.now(),
+      isPaper: false
+    };
+
+    if (existingIdx >= 0) {
+      currentDb.exchangeAccounts[existingIdx] = accountObj;
+    } else {
+      currentDb.exchangeAccounts.push(accountObj);
+    }
+
+    if (!currentDb.auditLogs) {
+      currentDb.auditLogs = [];
+    }
+
+    currentDb.auditLogs.unshift({
+      id: `log-${Date.now()}`,
+      action: "EXCHANGE_CONNECTED",
+      category: "EXCHANGE",
+      details: `Successfully authenticated and connected exchange: ${selectedExchange}`,
+      timestamp: Date.now(),
+      user: "admin"
+    });
+
+    await writeDb(currentDb);
+    db = currentDb;
+    return res.json({ success: true, exchange: accountObj });
+  } catch (error: any) {
+    console.error("[Server] POST /api/exchanges error:", error);
+    return res.status(500).json({ error: error.message || "A server error has occurred" });
   }
-
-  const maskedKey = `${apiKey.substring(0, 4)}••••••••${apiKey.substring(Math.max(0, apiKey.length - 4))}`;
-
-  // Check if exchange account already exists and update, or add new
-  const existingIdx = currentDb.exchangeAccounts.findIndex((ex: any) => ex.exchangeName === selectedExchange);
-  const accountObj = {
-    id: existingIdx >= 0 ? currentDb.exchangeAccounts[existingIdx].id : `ex-${Date.now()}`,
-    exchangeName: selectedExchange,
-    apiKeyMasked: maskedKey,
-    apiKey, // Save actual key
-    apiSecret, // Save actual secret
-    status,
-    permissions,
-    lastSync: Date.now(),
-    isPaper: false
-  };
-
-  if (existingIdx >= 0) {
-    currentDb.exchangeAccounts[existingIdx] = accountObj;
-  } else {
-    currentDb.exchangeAccounts.push(accountObj);
-  }
-
-  currentDb.auditLogs.unshift({
-    id: `log-${Date.now()}`,
-    action: "EXCHANGE_CONNECTED",
-    category: "EXCHANGE",
-    details: `Successfully authenticated and connected exchange: ${selectedExchange}`,
-    timestamp: Date.now(),
-    user: "admin"
-  });
-
-  writeDb(currentDb);
-  db = currentDb;
-  res.json({ success: true, exchange: accountObj });
 });
 
 app.post("/api/exchanges/refresh", async (req, res) => {
