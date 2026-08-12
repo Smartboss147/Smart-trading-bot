@@ -946,10 +946,6 @@ app.post("/api/exchanges", async (req, res) => {
   if (isGate) {
     console.log(`[GateAuth] Validating key: ${apiKey.substring(0, 4)}...`);
     try {
-      if (apiKey.length < 16 || apiSecret.length < 16) {
-        throw new Error("API Key or Secret appears too short. Gate.io keys are typically 32+ characters.");
-      }
-
       console.log(`[GateAuth] Creating client for ${apiKey.substring(0, 4)}...`);
       const testClient = new ApiClient();
       testClient.basePath = 'https://api.gateio.ws/api/v4'; 

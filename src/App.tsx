@@ -268,10 +268,6 @@ export default function App() {
     const cleanKey = sanitize(apiKey);
     const cleanSecret = sanitize(apiSecret);
 
-    if (cleanKey.length < 16 || cleanSecret.length < 16) {
-      return { success: false, error: "API Key or Secret appears too short. Please ensure you copied the full strings accurately from the exchange." };
-    }
-
     try {
       const res = await safeFetchJson("/api/exchanges", {
         method: "POST",
