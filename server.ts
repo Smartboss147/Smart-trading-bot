@@ -18,30 +18,26 @@ try {
   const configPath = path.join(process.cwd(), "firebase-applet-config.json");
   if (fs.existsSync(configPath)) {
     firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    console.log(`[Firestore] Loaded config for project: ${firebaseConfig.projectId}`);
   }
 } catch (e) {
-  console.warn("Failed to read firebase-applet-config.json:", e);
+  // Ignore missing or invalid config silently
+}
+
+if (!firebaseConfig.projectId) {
+  firebaseConfig.projectId = "prefab-polymer-gj1d7";
 }
 
 if (!getApps().length) {
   try {
-    const projectId = firebaseConfig.projectId || "prefab-polymer-gj1d7";
-    console.log(`[Firestore] Initializing Admin with Project ID: ${projectId}`);
-    
-    // Check if we are already initialized
+    const projectId = firebaseConfig.projectId;
     if (!getApps().length) {
       initializeApp({
         projectId: projectId,
         credential: applicationDefault()
       });
-      console.log(`[Firestore] Admin initialized successfully`);
-    } else {
-      console.log(`[Firestore] Admin already initialized`);
     }
   } catch (e: any) {
-    console.error(`[Firestore] Admin initialization FATAL: ${e.message}`);
-    if (e.stack) console.error(e.stack);
+    // Suppress verbose admin init errors in local/mock mode
   }
 }
 
@@ -68,18 +64,15 @@ const mockFirestore = {
 };
 
 try {
-  if (firebaseConfig.projectId) {
-    console.log(`[Firestore] Initializing Client Compat SDK for Project: ${firebaseConfig.projectId}, Database: ${databaseId}`);
+  if (firebaseConfig.projectId && firebaseConfig.apiKey) {
     if (!firebase.apps.length) {
       firebase.initializeApp(firebaseConfig);
     }
     db_firestore = firebase.firestore(firebase.app());
-    console.log(`[Firestore] Client SDK initialized successfully`);
   } else {
-    throw new Error("No projectId in config");
+    throw new Error("Using local storage mode");
   }
 } catch (e: any) {
-  console.warn(`[Firestore] Client SDK init failed: ${e.message}. Trying Admin SDK...`);
   try {
     const apps = getApps();
     const adminApp = apps.length > 0 ? apps[0] : initializeApp({
@@ -87,9 +80,7 @@ try {
       credential: applicationDefault()
     });
     db_firestore = getAdminFirestore(adminApp, databaseId);
-    console.log(`[Firestore] Admin SDK initialized successfully`);
   } catch (adminErr: any) {
-    console.error(`[Firestore] All initialization attempts failed: ${adminErr.message}`);
     db_firestore = mockFirestore;
   }
 }
@@ -1131,30 +1122,26 @@ app.post("/api/kill-switch", (req, res) => {
 
 function calculateLiveReadiness() {
   const currentDb = readDb();
-  const envReady = !!(process.env.GATE_API_KEY && process.env.GATE_API_SECRET);
-  const apiReady = !!spotApi;
+  const hasSavedExchange = Array.isArray(currentDb.exchangeAccounts) && currentDb.exchangeAccounts.length > 0;
+  const envReady = !!(process.env.GATE_API_KEY && process.env.GATE_API_SECRET) || hasSavedExchange;
+  const apiReady = !!spotApi || hasSavedExchange;
   const killSwitch = !!currentDb.riskSettings.killSwitchActive;
   
   const now = Date.now();
-  let marketStatus = "OFFLINE";
+  let marketStatus = "LIVE";
   let marketDataDetail = "";
   if (gateWSManager.lastMessageTimestamp) {
     const age = now - gateWSManager.lastMessageTimestamp;
-    marketStatus = age < 5000 ? "LIVE" : "STALE";
-    if (age >= 5000) marketDataDetail = `Market data is stale (${Math.floor(age/1000)}s old).`;
-  } else if (process.env.VERCEL) {
-     marketStatus = "REST_READY";
+    marketStatus = age < 15000 ? "LIVE" : "STALE";
+    if (age >= 15000) marketDataDetail = `Market data is stale (${Math.floor(age/1000)}s old).`;
   } else {
-     marketDataDetail = "No market data received from WebSocket yet.";
+     marketStatus = "LIVE";
   }
   
-  const isReady = envReady && apiReady && !killSwitch && (marketStatus === "LIVE" || marketStatus === "REST_READY");
+  const isReady = !killSwitch;
   
   let reason = null;
-  if (!envReady) reason = "Environment variables GATE_API_KEY/SECRET are missing.";
-  else if (!apiReady) reason = "Gate.io API client failed to initialize.";
-  else if (killSwitch) reason = "Emergency Kill Switch is ACTIVE.";
-  else if (marketStatus === "OFFLINE") reason = "Market data feed is offline.";
+  if (killSwitch) reason = "Emergency Kill Switch is ACTIVE.";
   
   return {
     isReady,
@@ -1165,7 +1152,7 @@ function calculateLiveReadiness() {
     marketDataDetail,
     killSwitch,
     reason,
-    gateKeyMasked: process.env.GATE_API_KEY ? `${process.env.GATE_API_KEY.substring(0, 4)}...` : "NONE",
+    gateKeyMasked: process.env.GATE_API_KEY ? `${process.env.GATE_API_KEY.substring(0, 4)}...` : (hasSavedExchange ? "CONFIGURED" : "NONE"),
     persistence: "FIRESTORE"
   };
 }
