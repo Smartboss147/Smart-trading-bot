@@ -75,10 +75,13 @@ export async function safeFetchJson<T = any>(
       
       // Intercept unhelpful proxy/server generic errors
       const isGenericError = errorMsg === "A server error has occurred" || errorMsg === "Load failed";
-      const isTimeout = res.status === 504 || errorMsg.toLowerCase().includes("timeout");
+      const isTimeout = res.status === 504 || (res.status === 401 && errorMsg.toLowerCase().includes("timeout"));
       
-      if ((isGenericError || isTimeout) && !jsonBody?.error) {
-        errorMsg = "The connection failed due to a server timeout or temporary error. Please verify your API keys and try again in a few moments.";
+      if (isGenericError || isTimeout) {
+        // If it's generic AND it doesn't look like we have a real payload from the exchange
+        if (!jsonBody?.error || jsonBody.error === "A server error has occurred") {
+          errorMsg = "The connection failed due to a server timeout or temporary network error. Please verify your API keys and try again in a few moments.";
+        }
       }
       
       return { ok: false, status: res.status, data: jsonBody, error: errorMsg };

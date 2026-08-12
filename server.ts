@@ -274,7 +274,29 @@ function readDb() {
   return cachedDb;
 }
 
-syncFromFirestore();
+async function initExchangeSessions() {
+  const currentDb = readDb();
+  if (!currentDb.exchangeAccounts || currentDb.exchangeAccounts.length === 0) {
+    console.log("[Exchange] No saved accounts found to initialize.");
+    return;
+  }
+
+  const gateAccount = currentDb.exchangeAccounts.find((acc: any) => /gate/i.test(acc.exchangeName));
+  if (gateAccount && gateAccount.apiKey && gateAccount.apiSecret) {
+    try {
+      console.log(`[Exchange] Auto-initializing Gate.io session for ${gateAccount.apiKeyMasked}...`);
+      gateClient = new ApiClient();
+      gateClient.basePath = 'https://api.gateio.ws/api/v4';
+      gateClient.setApiKeySecret(gateAccount.apiKey, gateAccount.apiSecret);
+      spotApi = new SpotApi(gateClient);
+      console.log("[Exchange] Gate.io session restored.");
+    } catch (e: any) {
+      console.warn("[Exchange] Failed to restore Gate.io session:", e.message);
+    }
+  }
+}
+
+syncFromFirestore().then(() => initExchangeSessions());
 
 async function writeDb(data: any) {
   cachedDb = data;
@@ -283,8 +305,25 @@ async function writeDb(data: any) {
   try {
     // 1. Risk Settings
     await db_firestore.collection('settings').doc('risk').set(data.riskSettings);
-    // Note: We don't overwrite everything else for performance, 
-    // but the app's current logic relies on a global state.
+    
+    // 2. Exchange Accounts (Save all to ensure sync)
+    if (Array.isArray(data.exchangeAccounts)) {
+      for (const acc of data.exchangeAccounts) {
+        if (acc.id) {
+          await db_firestore.collection('exchangeAccounts').doc(acc.id).set(acc);
+        }
+      }
+    }
+
+    // 3. Audit Logs (Only last 10 for performance)
+    if (Array.isArray(data.auditLogs) && data.auditLogs.length > 0) {
+      const topLogs = data.auditLogs.slice(0, 10);
+      for (const log of topLogs) {
+        if (log.id) {
+          await db_firestore.collection('auditLogs').doc(log.id).set(log);
+        }
+      }
+    }
   } catch (e) {
     console.error("[Firestore] Write failed:", e);
   }
@@ -846,7 +885,12 @@ app.post("/api/risk-settings", (req, res) => {
 
 app.get("/api/exchanges", (req, res) => {
   const currentDb = readDb();
-  res.json(currentDb.exchangeAccounts);
+  // Strip secrets before sending to frontend
+  const publicAccounts = currentDb.exchangeAccounts.map((acc: any) => {
+    const { apiKey, apiSecret, passphrase, ...publicInfo } = acc;
+    return publicInfo;
+  });
+  res.json(publicAccounts);
 });
 
 app.get("/api/diagnostics", (req, res) => {
@@ -903,7 +947,7 @@ app.post("/api/exchanges", async (req, res) => {
 
       console.log(`[GateAuth] Creating client for ${apiKey.substring(0, 4)}...`);
       const testClient = new ApiClient();
-      testClient.basePath = 'https://api.gateio.ws/api/v4'; // Explicitly set production endpoint
+      testClient.basePath = 'https://api.gateio.ws/api/v4'; 
       testClient.setApiKeySecret(apiKey, apiSecret);
       
       let testSpotApi;
@@ -913,7 +957,7 @@ app.post("/api/exchanges", async (req, res) => {
         throw new Error(`Failed to initialize Gate.io SDK: ${constrErr.message}`);
       }
       
-      // Internal timeout for the API call - reduced to 8s to stay safe within platform limits (Vercel/Run)
+      // Internal timeout for the API call - reduced to 8s to stay safe within platform limits
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error("Exchange response timed out (8s). Gate.io might be slow or your IP is restricted.")), 8000)
       );
@@ -930,11 +974,9 @@ app.post("/api/exchanges", async (req, res) => {
       const accountCount = Array.isArray(response.body) ? response.body.length : 0;
       console.log(`[GateAuth] Success: ${accountCount} accounts found`);
       
-      // Persist global credentials
+      // Set active session
       gateClient = testClient;
       spotApi = testSpotApi;
-      process.env.GATE_API_KEY = apiKey;
-      process.env.GATE_API_SECRET = apiSecret;
       
     } catch (err: any) {
       console.error("[GateAuth] Error:", err.name, err.message);
@@ -948,9 +990,12 @@ app.post("/api/exchanges", async (req, res) => {
       } else if (err.message) {
         errorDetail = err.message;
       }
+
+      // Avoid wrapping generic errors if they are already pretty generic
+      const finalError = errorDetail.includes("Authentication failed") ? errorDetail : `Authentication failed: ${errorDetail}`;
       
       return res.status(401).json({ 
-        error: `Authentication failed: ${errorDetail}. Tip: Ensure you have 'Spot Trading' and 'Read' permissions enabled on your Gate.io API key.`
+        error: `${finalError}. Tip: Ensure you have 'Spot Trading' and 'Read' permissions enabled on your Gate.io API key.`
       });
     }
   }
@@ -963,6 +1008,8 @@ app.post("/api/exchanges", async (req, res) => {
     id: existingIdx >= 0 ? currentDb.exchangeAccounts[existingIdx].id : `ex-${Date.now()}`,
     exchangeName: selectedExchange,
     apiKeyMasked: maskedKey,
+    apiKey, // Save actual key
+    apiSecret, // Save actual secret
     status,
     permissions,
     lastSync: Date.now(),
