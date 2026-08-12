@@ -177,24 +177,27 @@ export default function App() {
         "/api/trading/live-readiness"
       ];
 
-      // Fetch sequentially to prevent AI Studio proxy rate limits (Load failed)
-      const results = [];
-      for (const ep of endpoints) {
-        const res = await safeFetchJson(ep);
-        results.push(res);
-      }
+      // Fetch concurrently to improve performance and prevent sequential blocking
+      const promises = endpoints.map(ep => safeFetchJson(ep));
+      const results = await Promise.allSettled(promises);
+      
+      const getVal = (idx: number) => {
+        const res = results[idx];
+        if (res.status === 'fulfilled') return res.value;
+        return { ok: false, error: "Request failed" };
+      };
 
       // Defensive updates with null checks
-      if (results[0].ok && Array.isArray(results[0].data)) setMarkets(results[0].data);
-      if (results[1].ok && Array.isArray(results[1].data)) setOpportunities(results[1].data);
-      if (results[2].ok && Array.isArray(results[2].data)) setOrders(results[2].data);
-      if (results[3].ok && Array.isArray(results[3].data)) setTrades(results[3].data);
-      if (results[4].ok && Array.isArray(results[4].data)) setBalances(results[4].data);
-      if (results[5].ok && results[5].data) setRiskSettings(results[5].data);
-      if (results[6].ok && Array.isArray(results[6].data)) setExchangeAccounts(results[6].data);
-      if (results[7].ok && Array.isArray(results[7].data)) setAuditLogs(results[7].data);
-      if (results[8].ok && results[8].data) setAnalytics(results[8].data);
-      if (results[9].ok && results[9].data) setLiveReadiness(results[9].data);
+      if (getVal(0).ok && Array.isArray(getVal(0).data)) setMarkets(getVal(0).data);
+      if (getVal(1).ok && Array.isArray(getVal(1).data)) setOpportunities(getVal(1).data);
+      if (getVal(2).ok && Array.isArray(getVal(2).data)) setOrders(getVal(2).data);
+      if (getVal(3).ok && Array.isArray(getVal(3).data)) setTrades(getVal(3).data);
+      if (getVal(4).ok && Array.isArray(getVal(4).data)) setBalances(getVal(4).data);
+      if (getVal(5).ok && getVal(5).data) setRiskSettings(getVal(5).data);
+      if (getVal(6).ok && Array.isArray(getVal(6).data)) setExchangeAccounts(getVal(6).data);
+      if (getVal(7).ok && Array.isArray(getVal(7).data)) setAuditLogs(getVal(7).data);
+      if (getVal(8).ok && getVal(8).data) setAnalytics(getVal(8).data);
+      if (getVal(9).ok && getVal(9).data) setLiveReadiness(getVal(9).data);
     } catch (globalErr: any) {
       console.error("[App] fetchData global crash:", globalErr);
     } finally {

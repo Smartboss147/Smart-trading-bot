@@ -18,7 +18,7 @@ export async function safeFetchJson<T = any>(
     const fullUrl = url.startsWith("/") ? `${origin}${url}` : url;
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 seconds timeout
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // Increased to 30 seconds for mobile/slow networks
 
     const fetchOptions: RequestInit = {
       ...options,
@@ -72,6 +72,19 @@ export async function safeFetchJson<T = any>(
     if (!res.ok) {
       let rawError = jsonBody?.error || jsonBody?.message || `Server error (${res.status})`;
       let errorMsg = typeof rawError === 'string' ? rawError : (rawError?.message || JSON.stringify(rawError));
+      
+      // Intercept unhelpful proxy/server generic errors
+      const normalizedError = errorMsg.toLowerCase().trim();
+      if (
+        normalizedError.includes("server error") || 
+        normalizedError.includes("has occurred") || 
+        normalizedError.includes("load failed") ||
+        res.status === 500 ||
+        res.status === 504
+      ) {
+        errorMsg = "The connection failed due to a server timeout or temporary error. Please verify your API keys and try again in a few moments.";
+      }
+      
       return { ok: false, status: res.status, data: jsonBody, error: errorMsg };
     }
 

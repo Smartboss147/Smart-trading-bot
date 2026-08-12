@@ -913,9 +913,9 @@ app.post("/api/exchanges", async (req, res) => {
         throw new Error(`Failed to initialize Gate.io SDK: ${constrErr.message}`);
       }
       
-      // Use a shorter timeout to stay well within platform execution limits (e.g. Vercel 10s limit)
+      // Internal timeout for the API call - increased to 12s for better reliability
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Exchange response timed out (8s). Gate.io might be slow or your IP is restricted.")), 8000)
+        setTimeout(() => reject(new Error("Exchange response timed out (12s). Gate.io might be slow or your IP is restricted.")), 12000)
       );
 
       console.log(`[GateAuth] Validating with listSpotAccounts...`);
@@ -923,14 +923,8 @@ app.post("/api/exchanges", async (req, res) => {
       
       const response = await Promise.race([apiPromise, timeoutPromise]) as any;
 
-      if (!response) {
-        throw new Error("No response from Gate.io (NULL)");
-      }
-
-      console.log(`[GateAuth] Response received. Status: ${response.status || response.statusCode}, Body present: ${!!response.body}`);
-      
-      if (!response.body) {
-        throw new Error("Received empty response body from Gate.io. Check your API permissions.");
+      if (!response || !response.body) {
+        throw new Error("Received empty or invalid response from Gate.io. Check your API permissions.");
       }
 
       const accountCount = Array.isArray(response.body) ? response.body.length : 0;
@@ -947,7 +941,9 @@ app.post("/api/exchanges", async (req, res) => {
       
       let errorDetail = "Invalid API key or secret";
       
-      if (err.response && err.response.body) {
+      if (err.response && err.response.data) {
+        errorDetail = err.response.data.label || err.response.data.message || errorDetail;
+      } else if (err.response && err.response.body) {
         errorDetail = err.response.body.label || err.response.body.message || errorDetail;
       } else if (err.message) {
         errorDetail = err.message;
