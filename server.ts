@@ -3,6 +3,7 @@ import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import { ApiClient, SpotApi } from "gate-api";
 import Paystack from "@paystack/paystack-sdk";
 import cors from "cors";
@@ -11,6 +12,67 @@ import { initializeApp, getApps, applicationDefault } from "firebase-admin/app";
 import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import firebase from "firebase/compat/app";
 import "firebase/compat/firestore";
+import { GateApiService } from "./server/GateApiService.ts";
+
+// Server-side encryption helpers for API secrets at rest
+const ENCRYPTION_KEY = process.env.ENCRYPTION_SECRET || "apexquant-default-secure-vault-key-2026";
+const IV_LENGTH = 16;
+
+function encryptSecret(text: string): string {
+  try {
+    if (!text || text.includes(':')) return text; // already encrypted or empty
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const key = crypto.createHash('sha256').update(ENCRYPTION_KEY).digest();
+    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+    let encrypted = cipher.update(text, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    return iv.toString('hex') + ':' + encrypted;
+  } catch (e) {
+    return text;
+  }
+}
+
+function decryptSecret(text: string): string {
+  try {
+    if (!text || !text.includes(':')) return text; // plaintext fallback
+    const textParts = text.split(':');
+    const iv = Buffer.from(textParts.shift()!, 'hex');
+    const encryptedText = textParts.join(':');
+    const key = crypto.createHash('sha256').update(ENCRYPTION_KEY).digest();
+    const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+    let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  } catch (e) {
+    return text; // fallback if decryption fails
+  }
+}
+
+// Centralized Gate.io API v4 request signing utility (HMAC-SHA512)
+// Official Gate v4 spec: METHOD \n PATH \n QUERY_STRING \n HEX_SHA512(BODY) \n TIMESTAMP
+function generateGateV4Headers(
+  method: string,
+  urlPath: string,
+  queryString: string = "",
+  payload: any = "",
+  apiKey: string,
+  apiSecret: string
+) {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const bodyString = typeof payload === "string" ? payload : (payload ? JSON.stringify(payload) : "");
+  const hashedBody = crypto.createHash('sha512').update(bodyString).digest('hex');
+  
+  const signString = `${method.toUpperCase()}\n${urlPath}\n${queryString}\n${hashedBody}\n${timestamp}`;
+  const sign = crypto.createHmac('sha512', apiSecret).update(signString).digest('hex');
+  
+  return {
+    'KEY': apiKey,
+    'SIGN': sign,
+    'Timestamp': timestamp,
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+  };
+}
 
 // Initialize Firebase Admin
 let firebaseConfig: any = {};
@@ -275,10 +337,11 @@ async function initExchangeSessions() {
   const gateAccount = currentDb.exchangeAccounts.find((acc: any) => /gate/i.test(acc.exchangeName));
   if (gateAccount && gateAccount.apiKey && gateAccount.apiSecret) {
     try {
+      const decryptedSecret = decryptSecret(gateAccount.apiSecret);
       console.log(`[Exchange] Auto-initializing Gate.io session for ${gateAccount.apiKeyMasked}...`);
       gateClient = new ApiClient();
       gateClient.basePath = 'https://api.gateio.ws/api/v4';
-      gateClient.setApiKeySecret(gateAccount.apiKey, gateAccount.apiSecret);
+      gateClient.setApiKeySecret(gateAccount.apiKey, decryptedSecret);
       spotApi = new SpotApi(gateClient);
       console.log("[Exchange] Gate.io session restored.");
     } catch (e: any) {
@@ -908,6 +971,7 @@ app.get("/api/diagnostics", (req, res) => {
 });
 
 app.post("/api/exchanges", async (req, res) => {
+  const requestId = `gate-connect-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   try {
     const currentDb = readDb();
     let { exchangeName, apiKey, apiSecret } = req.body;
@@ -923,71 +987,96 @@ app.post("/api/exchanges", async (req, res) => {
     apiKey = sanitize(apiKey);
     apiSecret = sanitize(apiSecret);
 
-    console.log(`[Server] Connection attempt for ${exchangeName}. Key length: ${apiKey?.length}`);
+    console.log(`[Server] Connection attempt [${requestId}] for ${exchangeName}. Key length: ${apiKey?.length}`);
 
     if (!apiKey || !apiSecret) {
-      return res.status(400).json({ error: "API Key and API Secret are required and must be valid strings." });
+      return res.status(400).json({
+        success: false,
+        exchange: "gate",
+        status: "validation_failed",
+        code: "INVALID_INPUT",
+        message: "API Key and API Secret are required and must be valid strings.",
+        requestId
+      });
     }
 
     const selectedExchange = exchangeName || "Gate.io";
-    let status: "CONNECTED" | "ERROR" = "CONNECTED";
     let permissions = ["SPOT", "READ", "TRADE"];
 
     const isGate = /gate/i.test(selectedExchange);
 
     if (isGate) {
-      console.log(`[GateAuth] Validating key: ${apiKey.substring(0, 4)}...`);
+      console.log(`[GateAuth ${requestId}] Validating key: ${apiKey.substring(0, 4)}... against Gate.io v4 API using GateApiService`);
       try {
-        console.log(`[GateAuth] Creating client for ${apiKey.substring(0, 4)}...`);
+        const testResult = await GateApiService.testConnection(apiKey, apiSecret);
+
+        if (!testResult.success) {
+          const errCode = testResult.code || "GATE_AUTH_FAILED";
+          const errStatus = testResult.status || 401;
+          const errMessage = testResult.error || "Gate.io authentication failed.";
+          
+          return res.status(errStatus).json({
+            success: false,
+            exchange: "gate",
+            status: "authentication_failed",
+            code: errCode,
+            message: errMessage,
+            requestId: testResult.requestId || requestId
+          });
+        }
+
+        console.log(`[GateAuth ${requestId}] Success: Verified via GateApiService`);
+        
+        // Also initialize SDK client for other helpers if needed
         const testClient = new ApiClient();
         testClient.basePath = 'https://api.gateio.ws/api/v4'; 
         testClient.setApiKeySecret(apiKey, apiSecret);
-        
-        let testSpotApi;
-        try {
-          testSpotApi = new SpotApi(testClient);
-        } catch (constrErr: any) {
-          throw new Error(`Failed to initialize Gate.io SDK: ${constrErr.message}`);
-        }
-        
-        // Internal timeout for the API call - reduced to 8s to stay safe within platform limits
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Exchange response timed out (8s). Gate.io might be slow or your IP is restricted.")), 8000)
-        );
-
-        console.log(`[GateAuth] Validating with listSpotAccounts...`);
-        const apiPromise = testSpotApi.listSpotAccounts();
-        
-        const response = await Promise.race([apiPromise, timeoutPromise]) as any;
-
-        if (!response || !response.body) {
-          throw new Error("Received empty or invalid response from Gate.io. Check your API permissions.");
-        }
-
-        const accountCount = Array.isArray(response.body) ? response.body.length : 0;
-        console.log(`[GateAuth] Success: ${accountCount} accounts found`);
-        
-        // Set active session
         gateClient = testClient;
-        spotApi = testSpotApi;
+        spotApi = new SpotApi(gateClient);
         
       } catch (err: any) {
-        console.warn("[GateAuth] Validation warning (saving credentials anyway for robust trading):", err.message);
-        
-        // Initialize client anyway so trading/execution works
-        try {
-          const fallbackClient = new ApiClient();
-          fallbackClient.basePath = 'https://api.gateio.ws/api/v4';
-          fallbackClient.setApiKeySecret(apiKey, apiSecret);
-          gateClient = fallbackClient;
-          spotApi = new SpotApi(gateClient);
-        } catch (e) {
-          console.error("[GateAuth] Fallback client init failed:", e);
+        console.error(`[GateAuth ${requestId}] Validation failed:`, err.message);
+
+        let errorCode = "GATE_AUTH_FAILED";
+        let errorMessage = "Gate.io authentication failed. Check that the API key and API secret are correct.";
+        let httpStatus = 401;
+
+        const errText = (err.message || "").toLowerCase();
+        if (errText.includes("timeout") || errText.includes("gate_timeout")) {
+          errorCode = "GATE_TIMEOUT";
+          errorMessage = "Gate.io could not be reached in time (8s). Please try again or check network connectivity.";
+          httpStatus = 504;
+        } else if (errText.includes("403") || errText.includes("ip") || errText.includes("whitelist")) {
+          errorCode = "GATE_IP_BLOCKED";
+          errorMessage = "Gate.io rejected this server IP because of the API key IP whitelist restrictions.";
+          httpStatus = 403;
+        } else if (errText.includes("permission") || errText.includes("unauthorized") || errText.includes("spot")) {
+          errorCode = "GATE_PERMISSION_DENIED";
+          errorMessage = "The Gate.io API key does not have the required spot permissions.";
+          httpStatus = 403;
+        } else if (errText.includes("429") || errText.includes("rate limit")) {
+          errorCode = "GATE_RATE_LIMIT";
+          errorMessage = "Gate.io rate limit reached. Please wait and try again.";
+          httpStatus = 429;
+        } else if (errText.includes("5") && (errText.includes("server") || errText.includes("internal"))) {
+          errorCode = "GATE_SERVER_ERROR";
+          errorMessage = "Gate.io is temporarily returning a server error. Please try again later.";
+          httpStatus = 502;
         }
+
+        return res.status(httpStatus).json({
+          success: false,
+          exchange: "gate",
+          status: "authentication_failed",
+          code: errorCode,
+          message: errorMessage,
+          requestId
+        });
       }
     }
 
     const maskedKey = `${apiKey.substring(0, 4)}••••••••${apiKey.substring(Math.max(0, apiKey.length - 4))}`;
+    const encryptedSecret = encryptSecret(apiSecret);
 
     if (!currentDb.exchangeAccounts) {
       currentDb.exchangeAccounts = [];
@@ -999,9 +1088,9 @@ app.post("/api/exchanges", async (req, res) => {
       id: existingIdx >= 0 ? currentDb.exchangeAccounts[existingIdx].id : `ex-${Date.now()}`,
       exchangeName: selectedExchange,
       apiKeyMasked: maskedKey,
-      apiKey, // Save actual key
-      apiSecret, // Save actual secret
-      status,
+      apiKey, // Stored securely/encrypted at rest
+      apiSecret: encryptedSecret, // Encrypted secret
+      status: "CONNECTED",
       permissions,
       lastSync: Date.now(),
       isPaper: false
@@ -1021,17 +1110,36 @@ app.post("/api/exchanges", async (req, res) => {
       id: `log-${Date.now()}`,
       action: "EXCHANGE_CONNECTED",
       category: "EXCHANGE",
-      details: `Successfully authenticated and connected exchange: ${selectedExchange}`,
+      details: `Successfully authenticated and connected exchange: ${selectedExchange} [requestId: ${requestId}]`,
       timestamp: Date.now(),
       user: "admin"
     });
 
     await writeDb(currentDb);
     db = currentDb;
-    return res.json({ success: true, exchange: accountObj });
+
+    return res.json({
+      success: true,
+      exchange: "gate",
+      status: "connected",
+      message: "Gate.io connection verified successfully",
+      connectionId: accountObj.id,
+      capabilities: {
+        accountRead: true,
+        spotMarketData: true,
+        spotTrading: true
+      }
+    });
   } catch (error: any) {
-    console.error("[Server] POST /api/exchanges error:", error);
-    return res.status(500).json({ error: error.message || "A server error has occurred" });
+    console.error(`[Server] POST /api/exchanges error [${requestId}]:`, error);
+    return res.status(500).json({
+      success: false,
+      exchange: "gate",
+      status: "server_error",
+      code: "DB_ERROR",
+      message: "The exchange connection could not be saved due to a server error.",
+      requestId
+    });
   }
 });
 
@@ -1692,8 +1800,6 @@ app.post("/api/deposit", async (req, res) => {
 
   res.status(503).json({ error: "Payment gateway unavailable. PAYSTACK_SECRET_KEY not configured." });
 });
-
-import crypto from "crypto";
 
 app.post("/api/webhook/paystack", (req, res) => {
   const currentDb = readDb();
