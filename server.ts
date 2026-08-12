@@ -913,9 +913,9 @@ app.post("/api/exchanges", async (req, res) => {
         throw new Error(`Failed to initialize Gate.io SDK: ${constrErr.message}`);
       }
       
-      // Internal timeout for the API call - increased to 12s for better reliability
+      // Internal timeout for the API call - reduced to 8s to stay safe within platform limits (Vercel/Run)
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Exchange response timed out (12s). Gate.io might be slow or your IP is restricted.")), 12000)
+        setTimeout(() => reject(new Error("Exchange response timed out (8s). Gate.io might be slow or your IP is restricted.")), 8000)
       );
 
       console.log(`[GateAuth] Validating with listSpotAccounts...`);
