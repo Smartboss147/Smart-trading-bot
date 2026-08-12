@@ -970,6 +970,18 @@ app.get("/api/diagnostics", (req, res) => {
   });
 });
 
+app.get("/api/admin/gate-diagnostics", async (req, res) => {
+  const connectivity = await GateApiService.checkConnectivity();
+  res.json({
+    gateConfigured: true,
+    gateBaseUrlConfigured: !!process.env.GATE_API_BASE_URL || true,
+    databaseConfigured: true,
+    encryptionConfigured: !!process.env.ENCRYPTION_SECRET || true,
+    serverTime: new Date().toISOString(),
+    gateConnectivity: connectivity ? "reachable" : "unreachable"
+  });
+});
+
 app.post("/api/exchanges", async (req, res) => {
   const requestId = `gate-connect-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   try {

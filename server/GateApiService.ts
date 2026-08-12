@@ -17,20 +17,22 @@ export interface GateApiResponse<T = any> {
   code?: string;
   status: number;
   requestId: string;
+  rawResponse?: any;
 }
 
 export class GateApiService {
   private static baseURL: string = process.env.GATE_API_BASE_URL || "https://api.gateio.ws/api/v4";
-  private static timeoutMs: number = parseInt(process.env.GATE_API_TIMEOUT_MS || "10000", 10);
+  private static timeoutMs: number = parseInt(process.env.GATE_API_TIMEOUT_MS || "15000", 10);
 
   /**
    * Generates official Gate.io API v4 authentication headers using HMAC-SHA512.
    * Canonical string format:
    * METHOD + "\n" + REQUEST_URL_PATH + "\n" + QUERY_STRING + "\n" + SHA512_REQUEST_BODY + "\n" + TIMESTAMP
+   * CRITICAL: REQUEST_URL_PATH must include /api/v4 prefix (e.g. /api/v4/spot/accounts).
    */
   public static generateHeaders(
     method: string,
-    urlPath: string,
+    endpoint: string,
     queryString: string = "",
     payload: any = "",
     apiKey: string,
@@ -44,9 +46,14 @@ export class GateApiService {
     const bodyString = typeof payload === "string" ? payload : (payload && Object.keys(payload).length > 0 ? JSON.stringify(payload) : "");
     const hashedBody = crypto.createHash('sha512').update(bodyString).digest('hex');
     
-    const canonicalPath = urlPath.startsWith('/') ? urlPath : `/${urlPath}`;
+    // Ensure canonical path correctly includes /api/v4 prefix as required by Gate.io API v4 spec
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    const canonicalPath = cleanEndpoint.startsWith('/api/v4') ? cleanEndpoint : `/api/v4${cleanEndpoint}`;
+
     const signString = `${method.toUpperCase()}\n${canonicalPath}\n${queryString}\n${hashedBody}\n${timestamp}`;
-    const sign = crypto.createHmac('sha512', apiSecret).update(signString).digest('hex');
+    const sign = crypto.createHmac('sha512', apiSecret.trim()).update(signString).digest('hex');
+
+    console.log(`[GateSign] Method: ${method.toUpperCase()} | Path: ${canonicalPath} | Timestamp: ${timestamp} | BodyHash: ${hashedBody.substring(0, 10)}... | Sign: ${sign.substring(0, 10)}...`);
 
     return {
       'KEY': apiKey.trim(),
@@ -69,11 +76,14 @@ export class GateApiService {
     apiSecret: string
   ): Promise<GateApiResponse> {
     const requestId = `gate-req-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const fullPath = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-    const url = `${this.baseURL}${fullPath}${queryParams ? `?${queryParams}` : ""}`;
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    
+    // Ensure root URL is correct
+    const rootBase = this.baseURL.replace(/\/api\/v4\/?$/, '');
+    const url = `${rootBase}${cleanEndpoint.startsWith('/api/v4') ? cleanEndpoint : `/api/v4${cleanEndpoint}`}${queryParams ? `?${queryParams}` : ""}`;
 
     try {
-      const headers = this.generateHeaders(method, fullPath, queryParams, payload, apiKey, apiSecret);
+      const headers = this.generateHeaders(method, cleanEndpoint, queryParams, payload, apiKey, apiSecret);
       
       const config: AxiosRequestConfig = {
         method: method.toUpperCase(),
@@ -81,28 +91,49 @@ export class GateApiService {
         headers,
         data: payload && method.toUpperCase() !== 'GET' ? payload : undefined,
         timeout: this.timeoutMs,
-        validateStatus: () => true // Accept status codes to handle precise errors
+        validateStatus: () => true // Accept all status codes to inspect Gate error messages
       };
 
-      console.log(`[GateApiService ${requestId}] Executing ${method.toUpperCase()} ${fullPath}`);
+      console.log(`[GateApiService ${requestId}] Executing ${method.toUpperCase()} ${url}`);
       const response = await axios(config);
+
+      console.log(`[GateApiService ${requestId}] Response status: ${response.status}`, response.data);
 
       if (response.status >= 200 && response.status < 300) {
         return {
           success: true,
           data: response.data,
           status: response.status,
-          requestId
+          requestId,
+          rawResponse: response.data
         };
       } else {
-        const errorMsg = response.data?.message || response.data?.label || JSON.stringify(response.data) || "Gate.io API error";
-        console.error(`[GateApiService ${requestId}] Gate error status ${response.status}:`, errorMsg);
+        const errorData = response.data;
+        const errMessage = errorData?.message || errorData?.label || JSON.stringify(errorData) || "Gate.io API error";
+        
+        let errorCode = `GATE_HTTP_${response.status}`;
+        if (response.status === 401) {
+          errorCode = "GATE_AUTH_FAILED";
+        } else if (response.status === 403) {
+          const msgLower = errMessage.toLowerCase();
+          if (msgLower.includes('ip') || msgLower.includes('whitelist')) {
+            errorCode = "GATE_IP_RESTRICTED";
+          } else {
+            errorCode = "GATE_PERMISSION_DENIED";
+          }
+        } else if (response.status === 429) {
+          errorCode = "GATE_RATE_LIMIT";
+        } else if (response.status >= 500) {
+          errorCode = "GATE_SERVER_ERROR";
+        }
+
         return {
           success: false,
-          error: errorMsg,
-          code: `GATE_HTTP_${response.status}`,
+          error: errMessage,
+          code: errorCode,
           status: response.status,
-          requestId
+          requestId,
+          rawResponse: errorData
         };
       }
     } catch (err: any) {
@@ -122,5 +153,14 @@ export class GateApiService {
    */
   public static async testConnection(apiKey: string, apiSecret: string): Promise<GateApiResponse> {
     return this.request('GET', '/spot/accounts', '', null, apiKey, apiSecret);
+  }
+
+  public static async checkConnectivity(): Promise<boolean> {
+    try {
+      const res = await axios.get(`${this.baseURL}/spot/currencies`, { timeout: 5000 });
+      return res.status === 200;
+    } catch (e) {
+      return false;
+    }
   }
 }
