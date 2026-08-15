@@ -130,7 +130,7 @@ const authMiddleware = async (req: any, res: any, next: any) => {
 };
 
 app.use("/api", (req, res, next) => {
-  if (req.path === "/health" || req.path === "/webhook/paystack") return next();
+  if (req.path === "/health" || req.path === "/webhook/paystack" || req.path === "/auth/firebase-google") return next();
   authMiddleware(req, res, next);
 });
 
@@ -611,6 +611,129 @@ setInterval(() => {
 }, 1000);
 
 // REST API Endpoints
+
+app.post("/api/auth/firebase-google", async (req, res) => {
+  try {
+    const { email, firebaseUid, displayName, idToken } = req.body;
+    if (!email || typeof email !== "string") {
+      return res.status(400).json({ ok: false, error: "Valid email is required from Google authentication" });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!isSupabaseConfigured) {
+      // In local mode without Supabase connected, return a standard session representation
+      return res.json({
+        ok: true,
+        mode: "local",
+        user: {
+          id: firebaseUid || "google_user",
+          email: cleanEmail,
+          user_metadata: {
+            full_name: displayName || cleanEmail.split("@")[0],
+            firebase_uid: firebaseUid,
+            provider: "google"
+          }
+        },
+        tokenHash: null
+      });
+    }
+
+    // 1. Search for existing user with this email in Supabase
+    let existingUser: any = null;
+    try {
+      const { data: userData, error: userError } = await supabaseAdmin.auth.admin.listUsers();
+      if (!userError && userData?.users) {
+        existingUser = userData.users.find((u: any) => u.email?.toLowerCase() === cleanEmail);
+      }
+    } catch (listErr: any) {
+      console.warn("[Server] Supabase listUsers non-fatal warning:", listErr.message);
+    }
+
+    let targetUserId = existingUser?.id;
+    let isNewUser = false;
+
+    // 2. If user does NOT exist in Supabase, create them in Supabase (Google Sign-Up)
+    if (!targetUserId) {
+      isNewUser = true;
+      try {
+        const { data: newUserData, error: createError } = await supabaseAdmin.auth.admin.createUser({
+          email: cleanEmail,
+          email_confirm: true,
+          user_metadata: {
+            full_name: displayName || cleanEmail.split("@")[0],
+            firebase_uid: firebaseUid,
+            provider: "google"
+          }
+        });
+
+        if (createError) {
+          console.error("[Server] Error creating Supabase user for Google auth:", createError);
+          // If error was user already exists, retry lookup
+          if (createError.message?.includes("already registered") || (createError as any).status === 422) {
+            const { data: retryList } = await supabaseAdmin.auth.admin.listUsers();
+            const found = retryList?.users?.find((u: any) => u.email?.toLowerCase() === cleanEmail);
+            if (found) {
+              targetUserId = found.id;
+              existingUser = found;
+              isNewUser = false;
+            } else {
+              return res.status(400).json({ ok: false, error: createError.message });
+            }
+          } else {
+            return res.status(400).json({ ok: false, error: createError.message });
+          }
+        } else if (newUserData?.user) {
+          targetUserId = newUserData.user.id;
+          existingUser = newUserData.user;
+        }
+      } catch (createErr: any) {
+        return res.status(500).json({ ok: false, error: createErr?.message || "Failed to provision application user" });
+      }
+    }
+
+    // 3. Ensure profile and user settings exist for this user in Supabase
+    if (targetUserId) {
+      await ensureUserProfile(targetUserId, cleanEmail);
+    }
+
+    // 4. Generate magiclink OTP token so the client can verify and obtain an authentic Supabase session
+    try {
+      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+        type: 'magiclink',
+        email: cleanEmail
+      });
+
+      if (linkError) {
+        console.warn("[Server] generateLink non-fatal warning:", linkError.message);
+        return res.json({
+          ok: true,
+          isNewUser,
+          user: existingUser || { id: targetUserId, email: cleanEmail },
+          tokenHash: null
+        });
+      }
+
+      return res.json({
+        ok: true,
+        isNewUser,
+        user: existingUser || { id: targetUserId, email: cleanEmail },
+        tokenHash: linkData?.properties?.hashed_token || null
+      });
+    } catch (linkGenErr: any) {
+      console.warn("[Server] generateLink exception:", linkGenErr.message);
+      return res.json({
+        ok: true,
+        isNewUser,
+        user: existingUser || { id: targetUserId, email: cleanEmail },
+        tokenHash: null
+      });
+    }
+  } catch (err: any) {
+    console.error("[Server] /api/auth/firebase-google error:", err);
+    return res.status(500).json({ ok: false, error: err?.message || "Failed to process Google authentication" });
+  }
+});
 
 app.get("/api/health", async (req, res) => {
   const currentDb = await readDbForUser((req as any).user?.id || 'unknown');

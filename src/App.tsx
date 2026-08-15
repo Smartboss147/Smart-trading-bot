@@ -357,6 +357,20 @@ export default function App() {
     profitHistory: [] 
   };
 
+  const handleLogout = async () => {
+    try {
+      if (isSupabaseConfigured) {
+        await supabase.auth.signOut();
+      }
+      const { signOutFirebase } = await import('./lib/firebase');
+      await signOutFirebase();
+    } catch (err) {
+      console.error("[App] Logout error:", err);
+    } finally {
+      setSession(null);
+    }
+  };
+
   if (isSupabaseConfigured && !session && !isInitializing) {
     return (
       <ErrorBoundary>
@@ -388,6 +402,8 @@ export default function App() {
           systemHealth={safeSystemHealth}
           onToggleKillSwitch={handleToggleKillSwitch}
           totalBalanceUsd={totalBalanceUsd}
+          userEmail={session?.user?.email}
+          onLogout={handleLogout}
         />
 
         {safeRiskSettings?.tradingMode === "LIVE" && (

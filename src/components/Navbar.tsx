@@ -1,5 +1,5 @@
 import React from "react";
-import { Activity, ShieldAlert, Zap, Terminal, BarChart2, Cpu, Settings, Key, Globe, Eye, Wallet, TrendingUp } from "lucide-react";
+import { Activity, ShieldAlert, Zap, Terminal, BarChart2, Cpu, Settings, Key, Globe, Eye, Wallet, TrendingUp, LogOut, User } from "lucide-react";
 import { RiskSettings, SystemHealth } from "../types";
 
 interface NavbarProps {
@@ -9,9 +9,11 @@ interface NavbarProps {
   systemHealth: SystemHealth | null;
   onToggleKillSwitch: () => void;
   totalBalanceUsd: number;
+  userEmail?: string;
+  onLogout?: () => void;
 }
 
-export function Navbar({ activeTab, setActiveTab, riskSettings, systemHealth, onToggleKillSwitch, totalBalanceUsd }: NavbarProps) {
+export function Navbar({ activeTab, setActiveTab, riskSettings, systemHealth, onToggleKillSwitch, totalBalanceUsd, userEmail, onLogout }: NavbarProps) {
   const killSwitchActive = riskSettings?.killSwitchActive || false;
   const isLive = riskSettings?.tradingMode === "LIVE";
 
@@ -86,6 +88,22 @@ export function Navbar({ activeTab, setActiveTab, riskSettings, systemHealth, on
 
         {/* Right side status & Kill Switch */}
         <div className="flex items-center gap-3">
+          {userEmail && (
+            <div className="hidden md:flex items-center gap-2 mr-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg">
+              <User className="w-3.5 h-3.5 text-slate-400" />
+              <span className="text-xs text-slate-300 font-medium truncate max-w-[150px]">{userEmail}</span>
+              {onLogout && (
+                <button 
+                  onClick={onLogout}
+                  className="ml-2 text-slate-500 hover:text-rose-400 transition-colors"
+                  title="Sign Out"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+          
           <div className="text-right hidden sm:block">
             <div className="text-[10px] text-slate-400 uppercase">Total Portfolio</div>
             <div className="text-sm font-mono font-bold text-slate-100">${totalBalanceUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
