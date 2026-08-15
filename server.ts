@@ -982,6 +982,54 @@ app.get("/api/admin/gate-diagnostics", async (req, res) => {
   });
 });
 
+// STEP 1 & 3: Bypass Firebase temporarily for direct Gate.io API credential testing
+app.post("/api/admin/direct-gate-test", async (req, res) => {
+  const requestId = `gate-direct-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  try {
+    const { apiKey, apiSecret } = req.body;
+    if (!apiKey || !apiSecret) {
+      return res.status(400).json({
+        success: false,
+        source: "direct-gate-test",
+        gateStatus: 400,
+        gateLabel: "INVALID_INPUT",
+        message: "API Key and API Secret are required for direct test.",
+        requestId
+      });
+    }
+
+    const testResult = await GateApiService.testConnection(apiKey, apiSecret);
+    
+    if (testResult.success) {
+      return res.json({
+        success: true,
+        source: "direct-gate-test",
+        gateStatus: testResult.status || 200,
+        message: "Gate authentication succeeded",
+        requestId: testResult.requestId || requestId
+      });
+    } else {
+      return res.status(testResult.status || 401).json({
+        success: false,
+        source: "direct-gate-test",
+        gateStatus: testResult.status || 401,
+        gateLabel: testResult.code || "GATE_AUTH_FAILED",
+        message: testResult.error || "Gate rejected the authentication signature",
+        requestId: testResult.requestId || requestId
+      });
+    }
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      source: "direct-gate-test",
+      gateStatus: 500,
+      gateLabel: "BACKEND_ERROR",
+      message: err.message || "Internal server error during direct Gate test",
+      requestId
+    });
+  }
+});
+
 app.post("/api/exchanges", async (req, res) => {
   const requestId = `gate-connect-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   try {
