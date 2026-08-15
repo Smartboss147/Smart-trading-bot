@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Key, Plus, Shield, Trash2, AlertCircle, RefreshCw, Layers } from "lucide-react";
 import { ExchangeAccount } from "../types";
+import { safeFetchJson } from "../utils/api";
 
 interface ExchangeConnectionsProps {
   exchanges: ExchangeAccount[];
@@ -22,12 +23,11 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      const response = await fetch("/api/exchanges/refresh", {
+      const response = await safeFetchJson("/api/exchanges/refresh", {
         method: "POST"
       });
-      const data = await response.json();
       if (!response.ok) {
-        alert(data.error || "Failed to refresh accounts.");
+        alert(response.error || "Failed to refresh accounts.");
       } else {
         if (onRefresh) onRefresh();
       }

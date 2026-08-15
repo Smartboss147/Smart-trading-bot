@@ -92,9 +92,10 @@ async function getGateApiForUser(userId: string) {
   if (!acc || !acc.apiSecret || acc.status === "ERROR") return null;
 
   const secret = decryptSecret(acc.apiSecret);
-  if (!secret) return null;
+  const key = acc.apiKey?.includes(':') ? decryptSecret(acc.apiKey) : acc.apiKey; // Support both just in case
+  if (!secret || !key) return null;
 
-  return { apiKey: acc.apiKey, apiSecret: secret };
+  return { apiKey: key, apiSecret: secret };
 }
 
 let paystackClient: Paystack | null = null;
@@ -796,6 +797,7 @@ app.get("/api/balances", async (req, res) => {
       );
       
       const apiPromise = GateApiService.request('GET', '/spot/accounts', '', null, gate.apiKey, gate.apiSecret);
+      apiPromise.catch(() => {}); // Prevent unhandled rejection if timeout wins
       const response = await Promise.race([apiPromise, timeoutPromise]) as any;
       
       if (!response || !response.success || !response.data) {
@@ -985,6 +987,8 @@ app.post("/api/exchanges", async (req, res) => {
     const permissions = ["SPOT", "READ", "TRADE"];
     const isGate = /gate/i.test(selectedExchange);
 
+    let initialBalances = null;
+
     if (isGate) {
       console.log(`[GateAuth ${requestId}] Validating key: ${apiKey.substring(0, 4)}... against Gate.io v4 API using GateApiService`);
       try {
@@ -1014,6 +1018,10 @@ app.post("/api/exchanges", async (req, res) => {
             message: errMessage,
             requestId: testResult.requestId || requestId
           });
+        }
+        
+        if (testResult.data && Array.isArray(testResult.data)) {
+          initialBalances = testResult.data;
         }
 
         console.log(`[GateAuth ${requestId}] Success: Verified via GateApiService`);
@@ -1059,6 +1067,7 @@ app.post("/api/exchanges", async (req, res) => {
     }
 
     const maskedKey = `${apiKey.substring(0, 4)}••••••••${apiKey.substring(Math.max(0, apiKey.length - 4))}`;
+    const encryptedKey = encryptSecret(apiKey);
     const encryptedSecret = encryptSecret(apiSecret);
 
     if (!currentDb.exchangeAccounts) {
@@ -1074,7 +1083,7 @@ app.post("/api/exchanges", async (req, res) => {
       id: accountId,
       exchangeName: selectedExchange,
       apiKeyMasked: maskedKey,
-      apiKey, // Stored securely
+      apiKey: encryptedKey, // Stored securely
       apiSecret: encryptedSecret, // Encrypted secret at rest
       status: "CONNECTED",
       permissions,
@@ -1087,6 +1096,22 @@ app.post("/api/exchanges", async (req, res) => {
       currentDb.exchangeAccounts[existingIdx] = accountObj;
     } else {
       currentDb.exchangeAccounts.push(accountObj);
+    }
+    
+    // Save initial balances if fetched
+    if (initialBalances) {
+      const liveBalances = initialBalances.map((acc: any) => ({
+        asset: acc.currency,
+        exchange: "Gate.io",
+        free: parseFloat(acc.available),
+        locked: parseFloat(acc.locked),
+        total: parseFloat(acc.available) + parseFloat(acc.locked),
+        usdValue: 0,
+        mode: "LIVE"
+      }));
+      
+      if (!currentDb.balances) currentDb.balances = [];
+      currentDb.balances = currentDb.balances.filter((b: any) => b.mode !== "LIVE").concat(liveBalances);
     }
 
     if (!currentDb.auditLogs) {
@@ -2052,6 +2077,7 @@ async function readDbForUser(userId: string = "default_user") {
       setTimeout(() => resolve(null), 2500)
     );
 
+    fetchPromise.catch(() => {}); // Prevent unhandled rejection if timeout wins
     const res: any = await Promise.race([fetchPromise, timeoutPromise]);
     if (!res) {
       // Timeout occurred, return cached/in-memory data

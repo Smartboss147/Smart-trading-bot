@@ -44,6 +44,7 @@ export async function getUserFromToken(authHeader?: string) {
       setTimeout(() => resolve({ data: { user: null }, error: new Error("Auth timeout") }), 2500)
     );
     const authPromise = supabaseAdmin.auth.getUser(token);
+    authPromise.catch(() => {}); // Prevent unhandled rejection if timeout wins
     const result = await Promise.race([authPromise, timeoutPromise]);
     
     if (result.error || !result.data?.user) {

@@ -43,7 +43,7 @@ export async function safeFetchJson<T = any>(
     }
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 seconds timeout
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 seconds timeout
 
     const fetchOptions: RequestInit = {
       ...options,
@@ -69,7 +69,7 @@ export async function safeFetchJson<T = any>(
       clearTimeout(timeoutId);
     }
     
-    console.log(`[API] Response ${url}: ${res.status}`);
+    console.log(`[API] Response ${fullUrl}: ${res.status}`);
     
     const contentType = res.headers.get("content-type") || "";
     let jsonBody: any = null;
@@ -78,7 +78,16 @@ export async function safeFetchJson<T = any>(
     try {
       text = await res.text();
     } catch (e) {
-      console.warn(`[API] Could not read text for ${url}`);
+      console.warn(`[API] Could not read text for ${fullUrl}`);
+    }
+
+    if (contentType.includes("text/html") || (text && text.trim().startsWith("<"))) {
+      console.warn(`[API] Received HTML response instead of JSON for ${fullUrl}. Cookie check redirect detected.`);
+      return {
+        ok: false,
+        status: res.status,
+        error: "Authentication session initializing. Please wait a moment."
+      };
     }
 
     if (contentType.includes("application/json") && text) {

@@ -204,9 +204,16 @@ export default function App() {
         "/api/trading/live-readiness"
       ];
 
-      // Fetch concurrently to improve performance and prevent sequential blocking
-      const promises = endpoints.map(ep => safeFetchJson(ep));
-      const results = await Promise.allSettled(promises);
+      // Fetch sequentially to avoid rate limits or browser network drops in proxy
+      const results: any[] = [];
+      for (const ep of endpoints) {
+        try {
+          const res = await safeFetchJson(ep);
+          results.push({ status: "fulfilled", value: res });
+        } catch (err) {
+          results.push({ status: "rejected", reason: err });
+        }
+      }
       
       const getVal = (idx: number) => {
         const res = results[idx];
