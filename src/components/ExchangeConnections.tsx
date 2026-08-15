@@ -204,11 +204,23 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
             </h3>
             
             {submitError && (
-              <div className="bg-rose-950/50 border border-rose-800 p-3 rounded text-xs text-rose-200 flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-bold">Authentication Failed</div>
-                  <div className="text-[11px] text-rose-300/90 mt-0.5">{submitError}</div>
+              <div className="bg-rose-950/60 border border-rose-800/80 p-3.5 rounded-lg text-xs text-rose-200 space-y-2">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold text-rose-300">Authentication Failed</div>
+                    <div className="text-[12px] text-rose-200/90 mt-0.5 leading-relaxed">{submitError}</div>
+                  </div>
+                </div>
+
+                {/* Helpful tips based on common Gate.io setup issues */}
+                <div className="bg-slate-950/60 border border-rose-900/40 rounded p-2.5 text-[11px] text-slate-300 space-y-1">
+                  <div className="font-semibold text-rose-300/90">Gate.io API Key Checklist:</div>
+                  <ul className="list-disc list-inside space-y-0.5 text-slate-400">
+                    <li>Ensure <span className="text-slate-200">Spot Trade</span> and <span className="text-slate-200">Read</span> permissions are enabled.</li>
+                    <li>If you have <span className="text-slate-200">IP Whitelist</span> configured on Gate.io, allow unrestricted access or add your server IP.</li>
+                    <li>Double check that the API Key and Secret are copied completely without extra spaces.</li>
+                  </ul>
                 </div>
               </div>
             )}

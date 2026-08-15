@@ -1,5 +1,4 @@
 import crypto from "crypto";
-import axios, { AxiosRequestConfig } from "axios";
 
 export interface GateApiHeaders {
   KEY: string;
@@ -22,7 +21,7 @@ export interface GateApiResponse<T = any> {
 
 export class GateApiService {
   private static baseURL: string = process.env.GATE_API_BASE_URL || "https://api.gateio.ws/api/v4";
-  private static timeoutMs: number = parseInt(process.env.GATE_API_TIMEOUT_MS || "15000", 10);
+  private static timeoutMs: number = parseInt(process.env.GATE_API_TIMEOUT_MS || "12000", 10);
 
   /**
    * Generates official Gate.io API v4 authentication headers using HMAC-SHA512.
@@ -53,8 +52,6 @@ export class GateApiService {
     const signString = `${method.toUpperCase()}\n${canonicalPath}\n${queryString}\n${hashedBody}\n${timestamp}`;
     const sign = crypto.createHmac('sha512', apiSecret.trim()).update(signString).digest('hex');
 
-    console.log(`[GateSign] Method: ${method.toUpperCase()} | Path: ${canonicalPath} | Timestamp: ${timestamp} | BodyHash: ${hashedBody.substring(0, 10)}... | Sign: ${sign.substring(0, 10)}...`);
-
     return {
       'KEY': apiKey.trim(),
       'SIGN': sign,
@@ -65,7 +62,7 @@ export class GateApiService {
   }
 
   /**
-   * Executes an authenticated request to Gate.io API v4 with robust timeout, error handling, and diagnostics.
+   * Executes an authenticated request to Gate.io API v4 using native fetch with robust timeout and diagnostics.
    */
   public static async request(
     method: string,
@@ -80,50 +77,72 @@ export class GateApiService {
     
     // Ensure root URL is correct
     const rootBase = this.baseURL.replace(/\/api\/v4\/?$/, '');
-    const url = `${rootBase}${cleanEndpoint.startsWith('/api/v4') ? cleanEndpoint : `/api/v4${cleanEndpoint}`}${queryParams ? `?${queryParams}` : ""}`;
+    const canonicalPath = cleanEndpoint.startsWith('/api/v4') ? cleanEndpoint : `/api/v4${cleanEndpoint}`;
+    const url = `${rootBase}${canonicalPath}${queryParams ? `?${queryParams}` : ""}`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
       const headers = this.generateHeaders(method, cleanEndpoint, queryParams, payload, apiKey, apiSecret);
+      const body = payload && method.toUpperCase() !== 'GET' 
+        ? (typeof payload === 'string' ? payload : JSON.stringify(payload)) 
+        : undefined;
+
+      console.log(`[GateApiService ${requestId}] ${method.toUpperCase()} ${url}`);
       
-      const config: AxiosRequestConfig = {
+      const response = await fetch(url, {
         method: method.toUpperCase(),
-        url,
         headers,
-        data: payload && method.toUpperCase() !== 'GET' ? payload : undefined,
-        timeout: this.timeoutMs,
-        validateStatus: () => true // Accept all status codes to inspect Gate error messages
-      };
+        body,
+        signal: controller.signal
+      });
 
-      console.log(`[GateApiService ${requestId}] Executing ${method.toUpperCase()} ${url}`);
-      const response = await axios(config);
+      clearTimeout(timeoutId);
 
-      console.log(`[GateApiService ${requestId}] Response status: ${response.status}`, response.data);
+      const status = response.status;
+      let data: any = null;
+      const text = await response.text();
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = text;
+      }
 
-      if (response.status >= 200 && response.status < 300) {
+      console.log(`[GateApiService ${requestId}] Response status: ${status}`, data);
+
+      if (status >= 200 && status < 300) {
         return {
           success: true,
-          data: response.data,
-          status: response.status,
+          data,
+          status,
           requestId,
-          rawResponse: response.data
+          rawResponse: data
         };
       } else {
-        const errorData = response.data;
-        const errMessage = errorData?.message || errorData?.label || JSON.stringify(errorData) || "Gate.io API error";
+        const errorData = data;
+        const errMessage = errorData?.message || errorData?.label || (typeof errorData === 'string' ? errorData : JSON.stringify(errorData)) || "Gate.io API error";
+        const errLabel = errorData?.label || `GATE_HTTP_${status}`;
         
-        let errorCode = `GATE_HTTP_${response.status}`;
-        if (response.status === 401) {
-          errorCode = "GATE_AUTH_FAILED";
-        } else if (response.status === 403) {
-          const msgLower = errMessage.toLowerCase();
-          if (msgLower.includes('ip') || msgLower.includes('whitelist')) {
+        let errorCode = errLabel;
+        if (status === 401) {
+          if (errLabel === "INVALID_KEY" || errMessage.toLowerCase().includes("invalid key")) {
+            errorCode = "GATE_INVALID_KEY";
+          } else if (errLabel === "INVALID_SIGNATURE" || errMessage.toLowerCase().includes("signature")) {
+            errorCode = "GATE_INVALID_SIGNATURE";
+          } else {
+            errorCode = "GATE_AUTH_FAILED";
+          }
+        } else if (status === 403) {
+          const msgLower = (errMessage + " " + errLabel).toLowerCase();
+          if (msgLower.includes('ip') || msgLower.includes('whitelist') || msgLower.includes('forbidden')) {
             errorCode = "GATE_IP_RESTRICTED";
           } else {
             errorCode = "GATE_PERMISSION_DENIED";
           }
-        } else if (response.status === 429) {
+        } else if (status === 429) {
           errorCode = "GATE_RATE_LIMIT";
-        } else if (response.status >= 500) {
+        } else if (status >= 500) {
           errorCode = "GATE_SERVER_ERROR";
         }
 
@@ -131,18 +150,20 @@ export class GateApiService {
           success: false,
           error: errMessage,
           code: errorCode,
-          status: response.status,
+          status,
           requestId,
           rawResponse: errorData
         };
       }
     } catch (err: any) {
+      clearTimeout(timeoutId);
+      const isAbort = err.name === 'AbortError';
       console.error(`[GateApiService ${requestId}] Network/System error:`, err.message);
       return {
         success: false,
-        error: err.message || "Network timeout or connection error",
-        code: err.code === 'ECONNABORTED' ? 'GATE_TIMEOUT' : 'GATE_NETWORK_ERROR',
-        status: 504,
+        error: isAbort ? "Gate.io API request timed out (12s). Please check your internet or retry." : (err.message || "Network connection error"),
+        code: isAbort ? 'GATE_TIMEOUT' : 'GATE_NETWORK_ERROR',
+        status: isAbort ? 504 : 502,
         requestId
       };
     }
@@ -157,7 +178,10 @@ export class GateApiService {
 
   public static async checkConnectivity(): Promise<boolean> {
     try {
-      const res = await axios.get(`${this.baseURL}/spot/currencies`, { timeout: 5000 });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${this.baseURL}/spot/currencies`, { signal: controller.signal });
+      clearTimeout(timeoutId);
       return res.status === 200;
     } catch (e) {
       return false;

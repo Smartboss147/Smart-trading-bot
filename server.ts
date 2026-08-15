@@ -876,13 +876,24 @@ app.post("/api/exchanges", async (req, res) => {
         if (!testResult.success) {
           const errCode = testResult.code || "GATE_AUTH_FAILED";
           const errStatus = testResult.status || 401;
-          const errMessage = testResult.error || "Gate.io authentication failed.";
+          let errMessage = testResult.error || "Gate.io authentication failed.";
           
+          if (errCode === "GATE_INVALID_KEY" || /invalid.*key/i.test(errMessage)) {
+            errMessage = "Gate.io rejected the API Key. Please ensure the key was copied accurately from your Gate.io API Management page.";
+          } else if (errCode === "GATE_INVALID_SIGNATURE" || /signature/i.test(errMessage)) {
+            errMessage = "Gate.io signature verification failed. Please verify that the API Secret matches this API Key.";
+          } else if (errCode === "GATE_IP_RESTRICTED" || /ip|whitelist|forbidden/i.test(errMessage)) {
+            errMessage = "Gate.io rejected this server IP. In your Gate.io API Key settings, set IP Permissions to Unrestricted or add your current server.";
+          } else if (errCode === "GATE_PERMISSION_DENIED" || /permission/i.test(errMessage)) {
+            errMessage = "The Gate.io API key does not have the required Spot Read and Trade permissions.";
+          }
+
           return res.status(errStatus).json({
             success: false,
             exchange: "gate",
             status: "authentication_failed",
             code: errCode,
+            error: errMessage,
             message: errMessage,
             requestId: testResult.requestId || requestId
           });
