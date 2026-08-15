@@ -1,3 +1,5 @@
+import { supabase, isSupabaseConfigured } from './lib/supabase';
+import { Auth } from './components/Auth';
 import React, { useState, useEffect, useRef } from "react";
 import { Navbar } from "./components/Navbar";
 import { DashboardOverview } from "./components/DashboardOverview";
@@ -93,6 +95,31 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 // --- End ErrorBoundary ---
 
 export default function App() {
+  const [session, setSession] = useState<any>(null);
+  const [isInitializing, setIsInitializing] = useState(true);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setIsInitializing(false);
+      return;
+    }
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setIsInitializing(false);
+    }).catch(() => {
+      setIsInitializing(false);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
   const [activeTab, setActiveTab] = useState("dashboard");
   
   // Global error logging for debugging

@@ -1,3 +1,4 @@
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 export async function safeFetchJson<T = any>(
   url: string,
   options?: RequestInit
@@ -17,8 +18,21 @@ export async function safeFetchJson<T = any>(
 
     const fullUrl = url.startsWith("/") ? `${origin}${url}` : url;
     
+    // Get Supabase auth session token only if configured
+    let token = "";
+    if (isSupabaseConfigured) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          token = session.access_token;
+        }
+      } catch (e) {
+        console.warn("[API] Could not get Supabase session");
+      }
+    }
+    
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // Increased to 30 seconds for mobile/slow networks
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 seconds timeout
 
     const fetchOptions: RequestInit = {
       ...options,
@@ -27,6 +41,7 @@ export async function safeFetchJson<T = any>(
       headers: {
         'Accept': 'application/json',
         ...(isPostOrPut ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         ...((options?.headers as Record<string, string>) || {})
       }
     };
