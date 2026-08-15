@@ -357,6 +357,14 @@ export default function App() {
     profitHistory: [] 
   };
 
+  if (isSupabaseConfigured && !session && !isInitializing) {
+    return (
+      <ErrorBoundary>
+        <Auth onSuccess={() => {}} />
+      </ErrorBoundary>
+    );
+  }
+
   if (activeTab === "ipad") {
     return (
       <ErrorBoundary>

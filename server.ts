@@ -1,5 +1,5 @@
 import express from "express";
-import { supabaseAdmin, getUserFromToken, isSupabaseConfigured } from "./server/supabaseClient.ts";
+import { supabaseAdmin, getUserFromToken, isSupabaseConfigured } from "./server/supabaseClient";
 import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import path from "path";
@@ -8,7 +8,7 @@ import crypto from "crypto";
 import { ApiClient, SpotApi } from "gate-api";
 import Paystack from "@paystack/paystack-sdk";
 import cors from "cors";
-import { GateApiService } from "./server/GateApiService.ts";
+import { GateApiService } from "./server/GateApiService";
 
 
 const ENCRYPTION_KEY = process.env.ENCRYPTION_SECRET || "default_development_key_32_chars!";
@@ -1842,41 +1842,44 @@ app.post("/api/withdraw", async (req, res) => {
 });
 
 // Vite middleware setup & SPA fallback (AFTER all /api routes)
-if (process.env.NODE_ENV !== "production") {
-  import("vite").then(async ({ createServer }) => {
-    const vite = await createServer({
-      server: { middlewareMode: true },
-      appType: "spa",
+async function startServer() {
+  if (process.env.NODE_ENV !== "production") {
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+      console.log("[Server] Vite middleware mounted in development mode");
+    } catch (e) {
+      console.error("[Server] Error initializing Vite middleware:", e);
+    }
+  } else {
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
     });
-    app.use(vite.middlewares);
+  }
+
+  app.use((err: any, req: any, res: any, next: any) => {
+    console.error("[Server Error]", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Internal Server Error", details: err?.message || String(err) });
+    }
   });
-} else {
-  const distPath = path.join(process.cwd(), "dist");
-  app.use(express.static(distPath));
-  app.get("*", async (req, res) => {
-    res.sendFile(path.join(distPath, "index.html"));
-  });
+
+  if (!process.env.VERCEL) {
+    server.listen(PORT, "0.0.0.0", () => {
+      console.log(`ApexQuant Server running on http://0.0.0.0:${PORT}`);
+    });
+  }
 }
 
-app.use((err: any, req: any, res: any, next: any) => {
-  console.error("[Server Error]", err);
-  res.status(500).json({ error: "Internal Server Error", details: err.message });
+startServer().catch((err) => {
+  console.error("[Server Fatal] Failed to start server:", err);
 });
-
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("Unhandled Rejection at:", promise, "reason:", reason);
-});
-
-process.on("uncaughtException", (err) => {
-  console.error("Uncaught Exception thrown:", err);
-  // Optional: process.exit(1) if you want to fail fast
-});
-
-if (!process.env.VERCEL) {
-  server.listen(PORT, "0.0.0.0", () => {
-    console.log(`ApexQuant Server running on http://localhost:${PORT}`);
-  });
-}
 
 export default app;
 
