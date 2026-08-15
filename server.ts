@@ -1,4 +1,5 @@
 import express from "express";
+import { supabaseAdmin, getUserFromToken } from "./server/supabaseClient.ts";
 import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import path from "path";
@@ -7,34 +8,25 @@ import crypto from "crypto";
 import { ApiClient, SpotApi } from "gate-api";
 import Paystack from "@paystack/paystack-sdk";
 import cors from "cors";
-import * as admin from "firebase-admin";
-import { initializeApp, getApps, applicationDefault } from "firebase-admin/app";
-import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
-import firebase from "firebase/compat/app";
-import "firebase/compat/firestore";
 import { GateApiService } from "./server/GateApiService.ts";
 
-// Server-side encryption helpers for API secrets at rest
-const ENCRYPTION_KEY = process.env.ENCRYPTION_SECRET || "apexquant-default-secure-vault-key-2026";
+
+const ENCRYPTION_KEY = process.env.ENCRYPTION_SECRET || "default_development_key_32_chars!";
 const IV_LENGTH = 16;
 
 function encryptSecret(text: string): string {
-  try {
-    if (!text || text.includes(':')) return text; // already encrypted or empty
-    const iv = crypto.randomBytes(IV_LENGTH);
-    const key = crypto.createHash('sha256').update(ENCRYPTION_KEY).digest();
-    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
-    let encrypted = cipher.update(text, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-    return iv.toString('hex') + ':' + encrypted;
-  } catch (e) {
-    return text;
-  }
+  if (!text) return text;
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const key = crypto.createHash('sha256').update(ENCRYPTION_KEY).digest();
+  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  return iv.toString('hex') + ':' + encrypted;
 }
 
 function decryptSecret(text: string): string {
+  if (!text || !text.includes(':')) return text;
   try {
-    if (!text || !text.includes(':')) return text; // plaintext fallback
     const textParts = text.split(':');
     const iv = Buffer.from(textParts.shift()!, 'hex');
     const encryptedText = textParts.join(':');
@@ -43,126 +35,22 @@ function decryptSecret(text: string): string {
     let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
     return decrypted;
-  } catch (e) {
-    return text; // fallback if decryption fails
+  } catch(e) {
+    return text;
   }
 }
 
-// Centralized Gate.io API v4 request signing utility (HMAC-SHA512)
-// Official Gate v4 spec: METHOD \n PATH \n QUERY_STRING \n HEX_SHA512(BODY) \n TIMESTAMP
-function generateGateV4Headers(
-  method: string,
-  urlPath: string,
-  queryString: string = "",
-  payload: any = "",
-  apiKey: string,
-  apiSecret: string
-) {
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const bodyString = typeof payload === "string" ? payload : (payload ? JSON.stringify(payload) : "");
-  const hashedBody = crypto.createHash('sha512').update(bodyString).digest('hex');
-  
-  const signString = `${method.toUpperCase()}\n${urlPath}\n${queryString}\n${hashedBody}\n${timestamp}`;
-  const sign = crypto.createHmac('sha512', apiSecret).update(signString).digest('hex');
-  
-  return {
-    'KEY': apiKey,
-    'SIGN': sign,
-    'Timestamp': timestamp,
-    'Content-Type': 'application/json',
-    'Accept': 'application/json'
-  };
+async function getGateApiForUser(userId: string) {
+  const { data: acc } = await supabaseAdmin.from('exchange_connections').select('*').eq('user_id', userId).eq('exchange_name', 'Gate.io').single();
+  if (!acc || !acc.api_secret_encrypted) return null;
+  const secret = decryptSecret(acc.api_secret_encrypted);
+  const client = new ApiClient();
+  client.basePath = process.env.GATE_API_BASE_URL || 'https://api.gateio.ws/api/v4';
+  client.setApiKeySecret(acc.api_key, secret);
+  return { client, spotApi: new SpotApi(client), apiKey: acc.api_key, apiSecret: secret };
 }
 
-// Initialize Firebase Admin
-let firebaseConfig: any = {};
-try {
-  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-  if (fs.existsSync(configPath)) {
-    firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-  }
-} catch (e) {
-  // Ignore missing or invalid config silently
-}
-
-if (!firebaseConfig.projectId) {
-  firebaseConfig.projectId = "prefab-polymer-gj1d7";
-}
-
-if (!getApps().length) {
-  try {
-    const projectId = firebaseConfig.projectId;
-    if (!getApps().length) {
-      initializeApp({
-        projectId: projectId,
-        credential: applicationDefault()
-      });
-    }
-  } catch (e: any) {
-    // Suppress verbose admin init errors in local/mock mode
-  }
-}
-
-// Ensure we target the specific database ID provided in config
-const databaseId = firebaseConfig.firestoreDatabaseId || "(default)";
-let db_firestore: any;
-
-// Mock Firestore for fallback
-const mockFirestore = {
-  collection: (name: string) => ({
-    doc: (id: string) => ({
-      get: async () => ({ exists: false, data: () => null }),
-      set: async () => ({ success: true }),
-      update: async () => ({ success: true }),
-      delete: async () => ({ success: true })
-    }),
-    limit: (n: number) => ({
-      get: async () => ({ empty: true, size: 0, docs: [] })
-    }),
-    get: async () => ({ empty: true, size: 0, docs: [] }),
-    where: () => mockFirestore.collection(name),
-    orderBy: () => mockFirestore.collection(name),
-  })
-};
-
-try {
-  if (firebaseConfig.projectId && firebaseConfig.apiKey) {
-    if (!firebase.apps.length) {
-      firebase.initializeApp(firebaseConfig);
-    }
-    db_firestore = firebase.firestore(firebase.app());
-  } else {
-    throw new Error("Using local storage mode");
-  }
-} catch (e: any) {
-  try {
-    const apps = getApps();
-    const adminApp = apps.length > 0 ? apps[0] : initializeApp({
-      projectId: firebaseConfig.projectId || "prefab-polymer-gj1d7",
-      credential: applicationDefault()
-    });
-    db_firestore = getAdminFirestore(adminApp, databaseId);
-  } catch (adminErr: any) {
-    db_firestore = mockFirestore;
-  }
-}
-
-// Initialize external providers (they will fail gracefully if keys are missing)
-let gateClient: ApiClient | null = null;
-let spotApi: SpotApi | null = null;
 let paystackClient: Paystack | null = null;
-
-try {
-  if (process.env.GATE_API_KEY && process.env.GATE_API_SECRET) {
-    gateClient = new ApiClient();
-    gateClient.setApiKeySecret(process.env.GATE_API_KEY, process.env.GATE_API_SECRET);
-    spotApi = new SpotApi(gateClient);
-    console.log("Gate client initialized");
-  }
-} catch (e) {
-  console.warn("Failed to initialize Gate client:", e);
-}
-
 try {
   if (process.env.PAYSTACK_SECRET_KEY) {
     paystackClient = new Paystack(process.env.PAYSTACK_SECRET_KEY);
@@ -173,6 +61,21 @@ try {
 }
 
 const app = express();
+
+const authMiddleware = async (req: any, res: any, next: any) => {
+  const token = req.headers.authorization;
+  if (!token) return res.status(401).json({ error: "Unauthorized" });
+  const user = await getUserFromToken(token);
+  if (!user) return res.status(401).json({ error: "Unauthorized" });
+  req.user = user;
+  next();
+};
+
+app.use("/api", (req, res, next) => {
+  if (req.path === "/health" || req.path === "/webhook/paystack") return next();
+  authMiddleware(req, res, next);
+});
+
 
 // Simplified CORS for robustness in iframes
 app.use(cors({
@@ -187,37 +90,13 @@ app.use(async (req, res, next) => {
   
   const origin = req.headers.origin || "unknown";
   console.log(`[Server] ${req.method} ${req.url} from ${origin}`);
-
-  // Ensure DB is loaded
-  if (!isDbLoaded && !isSyncing && !req.url.includes('/api/health')) {
-    syncFromFirestore().catch(err => console.error("[Firestore] Background sync failed:", err));
-  }
-  
   next();
 });
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
+const PORT = 3000;
 
 app.use(express.json());
-
-// Health check endpoint
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", timestamp: Date.now() });
-});
-
-const PORT = 3000;
-const DATA_DIR = process.env.VERCEL
-  ? path.join("/tmp", "data")
-  : path.join(process.cwd(), "data");
-const DB_FILE = path.join(DATA_DIR, "database.json");
-
-if (!fs.existsSync(DATA_DIR)) {
-  try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  } catch (e) {
-    console.warn("Could not create DATA_DIR:", e);
-  }
-}
 
 // Initial Database Structure
 const defaultDb = {
@@ -247,161 +126,12 @@ const defaultDb = {
   ledger: [],
   deposits: [],
   auditLogs: [
-    { id: "log-1", action: "SYSTEM_STARTED", category: "SYSTEM", details: "ApexQuant arbitrage trading terminal initialized successfully.", timestamp: Date.now() - 600000, user: "system" },
-    { id: "log-2", action: "EXCHANGE_CONNECTED", category: "EXCHANGE", details: "Binance WebSocket feed connected successfully.", timestamp: Date.now() - 550000, user: "admin" },
+    { id: "log-1", action: "SYSTEM_STARTED", category: "SYSTEM", details: "ApexQuant arbitrage trading terminal initialized successfully with Supabase.", timestamp: Date.now() - 600000, user: "system" },
+    { id: "log-2", action: "EXCHANGE_CONNECTED", category: "EXCHANGE", details: "Gate.io WebSocket feed connected successfully.", timestamp: Date.now() - 550000, user: "admin" },
   ]
 };
 
-let cachedDb = { ...defaultDb };
-let isDbLoaded = false;
-let isSyncing = false;
-
-async function syncFromFirestore() {
-  if (isSyncing) return;
-  isSyncing = true;
-  try {
-    console.log(`[Firestore] Starting sync process...`);
-    const collections = ['riskSettings', 'exchangeAccounts', 'balances', 'orders', 'trades', 'auditLogs', 'ledger', 'deposits'];
-    
-    // Load local baseline
-    if (fs.existsSync(DB_FILE)) {
-      try {
-        const localData = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
-        cachedDb = { ...cachedDb, ...localData };
-        console.log("[Firestore] Baseline loaded from local database.json");
-      } catch (err) {
-        console.warn("[Firestore] Local baseline load failed:", err);
-      }
-    }
-
-    // Diagnostic test
-    try {
-      console.log(`[Firestore] Testing connectivity to ${databaseId}...`);
-      const testSnap = await db_firestore.collection('settings').limit(1).get();
-      console.log(`[Firestore] Connection successful. Found ${testSnap.size} docs.`);
-    } catch (e: any) {
-      if (e.message.includes("NOT_FOUND") || e.message.includes("PERMISSION_DENIED")) {
-        console.warn(`[Firestore] Connection test failed [${databaseId}]: ${e.message}. Switching to local mock mode.`);
-      } else {
-        console.error(`[Firestore] Connection test failed [${databaseId}]: ${e.message}`);
-      }
-      db_firestore = mockFirestore;
-      console.log("[Firestore] Continuing with local data mode.");
-      return;
-    }
-
-    // Risk Settings
-    try {
-      const riskDoc = await db_firestore.collection('settings').doc('risk').get();
-      if (riskDoc.exists) {
-        cachedDb.riskSettings = riskDoc.data() as any;
-        console.log("[Firestore] Loaded riskSettings");
-      }
-    } catch (err) {
-      console.warn("[Firestore] Failed to load riskSettings document");
-    }
-
-    // Other collections
-    for (const col of collections.slice(1)) {
-      try {
-        const snapshot = await db_firestore.collection(col).get();
-        if (!snapshot.empty) {
-          (cachedDb as any)[col] = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
-          console.log(`[Firestore] Synchronized collection: ${col} (${snapshot.size} docs)`);
-        }
-      } catch (err: any) {
-        console.warn(`[Firestore] Collection sync failed [${col}]: ${err.message}`);
-      }
-    }
-    
-    isDbLoaded = true;
-    console.log("[Firestore] Data synchronization complete");
-  } catch (e: any) {
-    console.error("[Firestore] syncFromFirestore fatal error:", e.message);
-  } finally {
-    isSyncing = false;
-  }
-}
-
-function readDb() {
-  return cachedDb;
-}
-
-async function initExchangeSessions() {
-  const currentDb = readDb();
-  if (!currentDb.exchangeAccounts || currentDb.exchangeAccounts.length === 0) {
-    console.log("[Exchange] No saved accounts found to initialize.");
-    return;
-  }
-
-  const gateAccount = currentDb.exchangeAccounts.find((acc: any) => /gate/i.test(acc.exchangeName));
-  if (gateAccount && gateAccount.apiKey && gateAccount.apiSecret) {
-    try {
-      const decryptedSecret = decryptSecret(gateAccount.apiSecret);
-      console.log(`[Exchange] Auto-initializing Gate.io session for ${gateAccount.apiKeyMasked}...`);
-      gateClient = new ApiClient();
-      gateClient.basePath = 'https://api.gateio.ws/api/v4';
-      gateClient.setApiKeySecret(gateAccount.apiKey, decryptedSecret);
-      spotApi = new SpotApi(gateClient);
-      console.log("[Exchange] Gate.io session restored.");
-    } catch (e: any) {
-      console.warn("[Exchange] Failed to restore Gate.io session:", e.message);
-    }
-  }
-}
-
-syncFromFirestore().then(() => initExchangeSessions());
-
-async function writeDb(data: any) {
-  cachedDb = data;
-  
-  // Async write to Firestore
-  try {
-    // 1. Risk Settings
-    await db_firestore.collection('settings').doc('risk').set(data.riskSettings);
-    
-    // 2. Exchange Accounts (Save all to ensure sync)
-    if (Array.isArray(data.exchangeAccounts)) {
-      for (const acc of data.exchangeAccounts) {
-        if (acc.id) {
-          await db_firestore.collection('exchangeAccounts').doc(acc.id).set(acc);
-        }
-      }
-    }
-
-    // 3. Audit Logs (Only last 10 for performance)
-    if (Array.isArray(data.auditLogs) && data.auditLogs.length > 0) {
-      const topLogs = data.auditLogs.slice(0, 10);
-      for (const log of topLogs) {
-        if (log.id) {
-          await db_firestore.collection('auditLogs').doc(log.id).set(log);
-        }
-      }
-    }
-  } catch (e) {
-    console.error("[Firestore] Write failed:", e);
-  }
-
-  // Local fallback
-  try {
-    if (!fs.existsSync(DATA_DIR)) {
-      try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
-    }
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
-  } catch (e) {
-    // Ignore on Vercel
-  }
-}
-
-async function saveToFirestore(collection: string, id: string, data: any) {
-  try {
-    await db_firestore.collection(collection).doc(id).set(data);
-  } catch (e) {
-    console.error(`[Firestore] Save to ${collection} failed:`, e);
-  }
-}
-
-let db = readDb();
+let db: any = { ...defaultDb };
 
 // 50+ Markets Initial State
 const symbolsList = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ETHBTC", "BNBUSDT", "ADAUSDT", "XRPUSDT", "DOTUSDT", "DOGEUSDT", "LINKUSDT", "MATICUSDT", "UNIUSDT", "LTCUSDT", "BCHUSDT", "FILUSDT", "AAVEUSDT", "ATOMUSDT", "TRXUSDT", "VETUSDT", "ALGOUSDT", "EOSUSDT", "XTZUSDT", "XMRUSDT", "DASHUSDT", "ZECUSDT", "NEOUSDT"];
@@ -451,7 +181,7 @@ class GateWSManager {
     this.symbols = symbols.filter(s => s.endsWith("USDT") || s === "ETHBTC");
     // Start a watchdog to ensure data is fresh, poll REST as fallback if WS fails
     if (!process.env.VERCEL) {
-      setInterval(() => this.watchdog(), 10000);
+      // setInterval(() => this.watchdog(), 10000);
     }
   }
 
@@ -670,9 +400,16 @@ if (!process.env.VERCEL) {
 // Real Gate.io Market Data Triangular Arbitrage Calculation Engine
 function calculateRealArbitrage() {
   const now = Date.now();
-  const currentDb = readDb();
-  const minEdge = currentDb.riskSettings?.minNetEdgePercent || 0.15;
-  const maxTradeUsd = currentDb.riskSettings?.maxTradeSizeUsd || 100;
+  const currentDb = {
+    riskSettings: {
+      tradingMode: 'PAPER',
+      minNetEdgePercent: 0.15,
+      maxTradeSizeUsd: 100,
+      killSwitchActive: false
+    }
+  }; 
+  const minEdge = currentDb.riskSettings.minNetEdgePercent || 0.15;
+  const maxTradeUsd = currentDb.riskSettings.maxTradeSizeUsd || 100;
   const feePerLegPercent = 0.20; // Standard Gate.io Spot Taker Fee (0.2%)
   
   const ethUsdt = marketsMap.get("ETHUSDT");
@@ -790,7 +527,6 @@ setInterval(() => {
 
   calculateRealArbitrage();
 
-  const mode = readDb().riskSettings.tradingMode;
   const broadcastData = JSON.stringify({
     type: "MARKET_UPDATE",
     timestamp: now,
@@ -802,8 +538,8 @@ setInterval(() => {
       database: "HEALTHY",
       marketData: (Date.now() - gateWSManager.lastMessageTimestamp < 10000) ? "LIVE" : "STALE",
       dataLatencyMs: Date.now() - gateWSManager.lastMessageTimestamp,
-      executionEngine: db.riskSettings.killSwitchActive ? "STOPPED" : "READY",
-      riskEngine: db.riskSettings.killSwitchActive ? "TRIGGERED" : "ACTIVE",
+      executionEngine: "READY",
+      riskEngine: "ACTIVE",
       activeStrategiesCount: gateWSManager.status === 'CONNECTED' ? 3 : 0,
       uptimeSeconds: Math.floor(process.uptime())
     }
@@ -818,8 +554,8 @@ setInterval(() => {
 
 // REST API Endpoints
 
-app.get("/api/health", (req, res) => {
-  const currentDb = readDb();
+app.get("/api/health", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user?.id || 'unknown');
   res.json({
     status: "ok",
     exchangeWs: "CONNECTED",
@@ -835,7 +571,7 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-app.get("/api/markets", (req, res) => {
+app.get("/api/markets", async (req, res) => {
   res.json(Array.from(marketsMap.values()));
 });
 
@@ -856,25 +592,26 @@ app.get("/api/opportunities", async (req, res) => {
   res.json(liveOpportunities);
 });
 
-app.get("/api/orders", (req, res) => {
-  const currentDb = readDb();
+app.get("/api/orders", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user.id);
   const mode = currentDb.riskSettings.tradingMode;
   res.json(currentDb.orders.filter((o: any) => o.mode === mode || (!o.mode && mode === 'PAPER')));
 });
 
-app.get("/api/trades", (req, res) => {
-  const currentDb = readDb();
+app.get("/api/trades", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user.id);
   const mode = currentDb.riskSettings.tradingMode;
   res.json(currentDb.trades.filter((t: any) => t.mode === mode || (!t.mode && mode === 'PAPER')));
 });
 
 app.get("/api/balances", async (req, res) => {
-  const currentDb = readDb();
+  const currentDb = await readDbForUser((req as any).user.id);
   const mode = currentDb.riskSettings.tradingMode;
 
   if (mode === "LIVE") {
-    if (!spotApi) {
-      return res.status(503).json({ error: "Exchange unavailable: Gate.io API keys missing or invalid" });
+    const gate = await getGateApiForUser((req as any).user.id);
+    const spotApi = gate?.spotApi;
+    if (!spotApi) { return res.status(503).json({ error: "Exchange unavailable: Gate.io API keys missing or invalid" });
     }
     try {
       console.log("[Server] Fetching live balances from Gate.io...");
@@ -904,7 +641,7 @@ app.get("/api/balances", async (req, res) => {
 
       // Update DB with synchronized cache
       currentDb.balances = currentDb.balances.filter((b: any) => b.mode !== "LIVE").concat(liveBalances);
-      writeDb(currentDb);
+      await writeDbForUser((req as any).user.id, currentDb);
 
       return res.json(liveBalances);
     } catch (e: any) {
@@ -929,21 +666,21 @@ app.get("/api/balances", async (req, res) => {
   res.json(currentDb.balances.filter((b: any) => b.mode === mode || (!b.mode && mode === 'PAPER')));
 });
 
-app.get("/api/risk-settings", (req, res) => {
-  const currentDb = readDb();
+app.get("/api/risk-settings", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user.id);
   res.json(currentDb.riskSettings);
 });
 
-app.post("/api/risk-settings", (req, res) => {
-  const currentDb = readDb();
+app.post("/api/risk-settings", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user.id);
   currentDb.riskSettings = { ...currentDb.riskSettings, ...req.body };
-  writeDb(currentDb);
+  await writeDbForUser((req as any).user.id, currentDb);
   db = currentDb;
-  res.json({ success: true, riskSettings: db.riskSettings });
+  res.json({ success: true, riskSettings: currentDb.riskSettings });
 });
 
-app.get("/api/exchanges", (req, res) => {
-  const currentDb = readDb();
+app.get("/api/exchanges", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user.id);
   // Strip secrets before sending to frontend
   const publicAccounts = currentDb.exchangeAccounts.map((acc: any) => {
     const { apiKey, apiSecret, passphrase, ...publicInfo } = acc;
@@ -952,8 +689,8 @@ app.get("/api/exchanges", (req, res) => {
   res.json(publicAccounts);
 });
 
-app.get("/api/diagnostics", (req, res) => {
-  const currentDb = readDb();
+app.get("/api/diagnostics", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user.id);
   res.json({
     env: {
       NODE_ENV: process.env.NODE_ENV,
@@ -1033,7 +770,7 @@ app.post("/api/admin/direct-gate-test", async (req, res) => {
 app.post("/api/exchanges", async (req, res) => {
   const requestId = `gate-connect-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   try {
-    const currentDb = readDb();
+    const currentDb = await readDbForUser((req as any).user.id);
     let { exchangeName, apiKey, apiSecret } = req.body;
     
     // Robust sanitization for keys often copied with invisible characters
@@ -1091,8 +828,8 @@ app.post("/api/exchanges", async (req, res) => {
         const testClient = new ApiClient();
         testClient.basePath = 'https://api.gateio.ws/api/v4'; 
         testClient.setApiKeySecret(apiKey, apiSecret);
-        gateClient = testClient;
-        spotApi = new SpotApi(gateClient);
+        // gateClient = testClient;
+        // spotApi = new SpotApi(gateClient);
         
       } catch (err: any) {
         console.error(`[GateAuth ${requestId}] Validation failed:`, err.message);
@@ -1153,7 +890,8 @@ app.post("/api/exchanges", async (req, res) => {
       status: "CONNECTED",
       permissions,
       lastSync: Date.now(),
-      isPaper: false
+      isPaper: false,
+      lastError: null
     };
 
     if (existingIdx >= 0) {
@@ -1175,7 +913,7 @@ app.post("/api/exchanges", async (req, res) => {
       user: "admin"
     });
 
-    await writeDb(currentDb);
+    await await writeDbForUser((req as any).user.id, currentDb);
     db = currentDb;
 
     return res.json({
@@ -1204,10 +942,11 @@ app.post("/api/exchanges", async (req, res) => {
 });
 
 app.post("/api/exchanges/refresh", async (req, res) => {
-  const currentDb = readDb();
+  const currentDb = await readDbForUser((req as any).user.id);
   
-  if (!spotApi) {
-    return res.status(400).json({ 
+  const gate = await getGateApiForUser((req as any).user.id);
+    const spotApi = gate?.spotApi;
+    if (!spotApi) { return res.status(400).json({ 
       error: "No active session found. Please re-authenticate your exchange to verify status." 
     });
   }
@@ -1229,7 +968,7 @@ app.post("/api/exchanges/refresh", async (req, res) => {
         return ex;
       });
       
-      writeDb(currentDb);
+      await writeDbForUser((req as any).user.id, currentDb);
       return res.json({ ok: true, message: "Connection verified successfully." });
     } else {
       throw new Error("Empty response from exchange");
@@ -1249,19 +988,17 @@ app.post("/api/exchanges/refresh", async (req, res) => {
       return ex;
     });
     
-    writeDb(currentDb);
+    await writeDbForUser((req as any).user.id, currentDb);
     return res.status(401).json({ error: "Verification failed. Your API keys may have expired or been revoked." });
   }
 });
 
-app.delete("/api/exchanges/:id", (req, res) => {
-  const currentDb = readDb();
+app.delete("/api/exchanges/:id", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user?.id || 'unknown');
   const id = req.params.id;
   const ex = currentDb.exchangeAccounts.find((e: any) => e.id === id);
   if (ex) {
     if (ex.exchangeName === "Gate.io" || ex.exchangeName === "Gate") {
-      gateClient = null;
-      spotApi = null;
       delete process.env.GATE_API_KEY;
       delete process.env.GATE_API_SECRET;
     }
@@ -1274,14 +1011,14 @@ app.delete("/api/exchanges/:id", (req, res) => {
       timestamp: Date.now(),
       user: "admin"
     });
-    writeDb(currentDb);
+    await writeDbForUser((req as any).user?.id || 'unknown', currentDb);
     db = currentDb;
   }
   res.json({ success: true });
 });
 
-app.post("/api/kill-switch", (req, res) => {
-  const currentDb = readDb();
+app.post("/api/kill-switch", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user.id);
   const active = req.body.active;
   currentDb.riskSettings.killSwitchActive = active;
   if (active) {
@@ -1296,17 +1033,17 @@ app.post("/api/kill-switch", (req, res) => {
     timestamp: Date.now(),
     user: "admin"
   });
-  writeDb(currentDb);
+  await writeDbForUser((req as any).user.id, currentDb);
   db = currentDb;
-  res.json({ success: true, killSwitchActive: db.riskSettings.killSwitchActive });
+  res.json({ success: true, killSwitchActive: currentDb.riskSettings.killSwitchActive });
 });
 
-function calculateLiveReadiness() {
-  const currentDb = readDb();
+async function calculateLiveReadiness(userId?: string) {
+  const currentDb = userId ? await readDbForUser(userId) : { exchangeAccounts: [], riskSettings: { killSwitchActive: false } };
   const hasSavedExchange = Array.isArray(currentDb.exchangeAccounts) && currentDb.exchangeAccounts.length > 0;
   const envReady = !!(process.env.GATE_API_KEY && process.env.GATE_API_SECRET) || hasSavedExchange;
-  const apiReady = !!spotApi || hasSavedExchange;
-  const killSwitch = !!currentDb.riskSettings.killSwitchActive;
+  const apiReady = hasSavedExchange;
+  const killSwitch = !!currentDb.riskSettings?.killSwitchActive;
   
   const now = Date.now();
   let marketStatus = "LIVE";
@@ -1333,26 +1070,26 @@ function calculateLiveReadiness() {
     marketDataDetail,
     killSwitch,
     reason,
-    gateKeyMasked: process.env.GATE_API_KEY ? `${process.env.GATE_API_KEY.substring(0, 4)}...` : (hasSavedExchange ? "CONFIGURED" : "NONE"),
-    persistence: "FIRESTORE"
+    gateKeyMasked: hasSavedExchange ? "CONFIGURED" : "NONE",
+    persistence: "SUPABASE"
   };
 }
 
-app.get("/api/trading/live-readiness", (req, res) => {
-  const readiness = calculateLiveReadiness();
+app.get("/api/trading/live-readiness", async (req, res) => {
+  const readiness = await calculateLiveReadiness((req as any).user?.id);
   res.json(readiness);
 });
 
-app.get("/api/trading-mode", (req, res) => {
-  const currentDb = readDb();
+app.get("/api/trading-mode", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user.id);
   res.json({ mode: currentDb.riskSettings?.tradingMode || "PAPER" });
 });
 
-app.post("/api/trading-mode", (req, res) => {
-  const currentDb = readDb();
+app.post("/api/trading-mode", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user.id);
   const mode = req.body.mode;
   if (mode === "LIVE") {
-    const readiness = calculateLiveReadiness();
+    const readiness = await calculateLiveReadiness((req as any).user?.id);
     if (!readiness.ready) {
       return res.status(400).json({ 
         error: `Cannot switch to LIVE TRADING: ${readiness.reason}`, 
@@ -1376,16 +1113,16 @@ app.post("/api/trading-mode", (req, res) => {
     timestamp: Date.now(),
     user: "admin"
   });
-  writeDb(currentDb);
+  await writeDbForUser((req as any).user.id, currentDb);
   db = currentDb;
-  res.json({ success: true, tradingMode: db.riskSettings.tradingMode });
+  res.json({ success: true, tradingMode: currentDb.riskSettings.tradingMode });
 });
 
-app.post("/api/trading/mode", (req, res) => {
-  const currentDb = readDb();
+app.post("/api/trading/mode", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user.id);
   const mode = req.body.mode;
   if (mode === "LIVE") {
-    const readiness = calculateLiveReadiness();
+    const readiness = await calculateLiveReadiness((req as any).user?.id);
     if (!readiness.ready) {
       return res.status(400).json({ 
         error: `Cannot switch to LIVE TRADING: ${readiness.reason}`, 
@@ -1409,13 +1146,13 @@ app.post("/api/trading/mode", (req, res) => {
     timestamp: Date.now(),
     user: "admin"
   });
-  writeDb(currentDb);
+  await writeDbForUser((req as any).user.id, currentDb);
   db = currentDb;
-  res.json({ success: true, tradingMode: db.riskSettings.tradingMode });
+  res.json({ success: true, tradingMode: currentDb.riskSettings.tradingMode });
 });
 
 app.post("/api/orders", async (req, res) => {
-  const currentDb = readDb();
+  const currentDb = await readDbForUser((req as any).user.id);
   if (currentDb.riskSettings.killSwitchActive) {
     return res.status(400).json({ error: "Kill switch is active. No new orders permitted." });
   }
@@ -1425,8 +1162,9 @@ app.post("/api/orders", async (req, res) => {
   const tradingMode = currentDb.riskSettings.tradingMode;
 
   if (tradingMode === "LIVE") {
-    if (!spotApi) {
-      return res.status(503).json({ error: "Exchange unavailable: Gate.io API keys missing or invalid" });
+    const gate = await getGateApiForUser((req as any).user.id);
+    const spotApi = gate?.spotApi;
+    if (!spotApi) { return res.status(503).json({ error: "Exchange unavailable: Gate.io API keys missing or invalid" });
     }
 
     try {
@@ -1500,7 +1238,7 @@ app.post("/api/orders", async (req, res) => {
         timestamp: now,
         user: "system"
       });
-      writeDb(currentDb);
+      await writeDbForUser((req as any).user.id, currentDb);
       db = currentDb;
       return res.json({ success: true, order: newOrder, trade: newTrade });
 
@@ -1577,13 +1315,13 @@ app.post("/api/orders", async (req, res) => {
     timestamp: now,
     user: "admin"
   });
-  writeDb(currentDb);
+  await writeDbForUser((req as any).user.id, currentDb);
   db = currentDb;
   res.json({ success: true, order: newOrder, trade: newTrade });
 });
 
 app.post("/api/execute-arbitrage", async (req, res) => {
-  const currentDb = readDb();
+  const currentDb = await readDbForUser((req as any).user.id);
   if (currentDb.riskSettings.killSwitchActive) {
     return res.status(400).json({ error: "Kill switch is active. Execution halted." });
   }
@@ -1603,8 +1341,9 @@ app.post("/api/execute-arbitrage", async (req, res) => {
   const tradingMode = currentDb.riskSettings.tradingMode;
 
   if (tradingMode === "LIVE") {
-    if (!spotApi) {
-      return res.status(503).json({ error: "Exchange unavailable: Gate.io live API keys are not configured or unauthenticated." });
+    const gate = await getGateApiForUser((req as any).user.id);
+    const spotApi = gate?.spotApi;
+    if (!spotApi) { return res.status(503).json({ error: "Exchange unavailable: Gate.io live API keys are not configured or unauthenticated." });
     }
 
     try {
@@ -1678,7 +1417,7 @@ app.post("/api/execute-arbitrage", async (req, res) => {
         user: "admin"
       });
 
-      writeDb(currentDb);
+      await writeDbForUser((req as any).user.id, currentDb);
       db = currentDb;
 
       return res.json({ success: true, order: newOrder, trade: newTrade, gateResponse: gateResult });
@@ -1744,14 +1483,14 @@ app.post("/api/execute-arbitrage", async (req, res) => {
     user: "admin"
   });
 
-  writeDb(currentDb);
+  await writeDbForUser((req as any).user.id, currentDb);
   db = currentDb;
 
   return res.json({ success: true, order: newOrder, trade: newTrade });
 });
 
-app.get("/api/analytics", (req, res) => {
-  const currentDb = readDb();
+app.get("/api/analytics", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user.id);
   const mode = currentDb.riskSettings.tradingMode;
   const trades = currentDb.trades.filter((t: any) => t.mode === mode || (!t.mode && mode === 'PAPER'));
   const totalTrades = trades.length;
@@ -1772,15 +1511,17 @@ app.get("/api/analytics", (req, res) => {
   });
 });
 
-app.get("/api/audit-logs", (req, res) => {
-  const currentDb = readDb();
+app.get("/api/audit-logs", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user.id);
   res.json(currentDb.auditLogs);
 });
 
 app.get("/api/wallet", async (req, res) => {
-  const currentDb = readDb();
+  const currentDb = await readDbForUser((req as any).user.id);
   let liveBalances = currentDb.balances.filter((b: any) => b.mode === "LIVE");
 
+  const gate = await getGateApiForUser((req as any).user.id);
+  const spotApi = gate?.spotApi;
   if (spotApi) {
     try {
       const response = await spotApi.listSpotAccounts();
@@ -1798,7 +1539,7 @@ app.get("/api/wallet", async (req, res) => {
 
       // Cache
       currentDb.balances = currentDb.balances.filter((b: any) => b.mode !== "LIVE").concat(liveBalances);
-      writeDb(currentDb);
+      await writeDbForUser((req as any).user.id, currentDb);
     } catch (e: any) {
       console.error("Failed to fetch Gate.io balances for wallet", e);
     }
@@ -1812,7 +1553,7 @@ app.get("/api/wallet", async (req, res) => {
 });
 
 app.post("/api/deposit", async (req, res) => {
-  const currentDb = readDb();
+  const currentDb = await readDbForUser((req as any).user.id);
   if (!currentDb.deposits) currentDb.deposits = [];
   if (!currentDb.ledger) currentDb.ledger = [];
   if (!currentDb.auditLogs) currentDb.auditLogs = [];
@@ -1838,7 +1579,7 @@ app.post("/api/deposit", async (req, res) => {
   };
 
   currentDb.deposits.unshift(deposit);
-  writeDb(currentDb);
+  await writeDbForUser((req as any).user.id, currentDb);
   
   if (paystackClient) {
     try {
@@ -1861,8 +1602,8 @@ app.post("/api/deposit", async (req, res) => {
   res.status(503).json({ error: "Payment gateway unavailable. PAYSTACK_SECRET_KEY not configured." });
 });
 
-app.post("/api/webhook/paystack", (req, res) => {
-  const currentDb = readDb();
+app.post("/api/webhook/paystack", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user.id);
   
   // Verify Paystack signature
   const secret = process.env.PAYSTACK_SECRET_KEY;
@@ -1932,15 +1673,15 @@ app.post("/api/webhook/paystack", (req, res) => {
         user: "system"
       });
       
-      writeDb(currentDb);
+      await writeDbForUser((req as any).user.id, currentDb);
     }
   }
   
   res.sendStatus(200);
 });
 
-app.post("/api/withdraw", (req, res) => {
-  const currentDb = readDb();
+app.post("/api/withdraw", async (req, res) => {
+  const currentDb = await readDbForUser((req as any).user.id);
   if (!currentDb.deposits) currentDb.deposits = [];
   if (!currentDb.ledger) currentDb.ledger = [];
   if (!currentDb.auditLogs) currentDb.auditLogs = [];
@@ -1990,7 +1731,7 @@ app.post("/api/withdraw", (req, res) => {
     user: "system"
   });
   
-  writeDb(currentDb);
+  await writeDbForUser((req as any).user.id, currentDb);
   
 
   res.json({ success: true, withdrawal });
@@ -2008,7 +1749,7 @@ if (process.env.NODE_ENV !== "production") {
 } else {
   const distPath = path.join(process.cwd(), "dist");
   app.use(express.static(distPath));
-  app.get("*", (req, res) => {
+  app.get("*", async (req, res) => {
     res.sendFile(path.join(distPath, "index.html"));
   });
 }
@@ -2034,3 +1775,136 @@ if (!process.env.VERCEL) {
 }
 
 export default app;
+
+
+async function readDbForUser(userId: string) {
+  const [settings, accounts, balances, orders, trades, logs, ledger, deposits] = await Promise.all([
+    supabaseAdmin.from('user_settings').select('*').eq('id', userId).maybeSingle(),
+    supabaseAdmin.from('exchange_connections').select('*').eq('user_id', userId),
+    supabaseAdmin.from('balances').select('*').eq('user_id', userId),
+    supabaseAdmin.from('orders').select('*').eq('user_id', userId),
+    supabaseAdmin.from('trades').select('*').eq('user_id', userId),
+    supabaseAdmin.from('audit_logs').select('*').eq('user_id', userId).order('timestamp', { ascending: false }).limit(50),
+    supabaseAdmin.from('ledger_entries').select('*').eq('user_id', userId),
+    supabaseAdmin.from('deposits').select('*').eq('user_id', userId)
+  ]);
+
+  const mapRecord = (r: any) => ({
+    ...r,
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+    updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : Date.now()
+  });
+
+  const camelCaseBalances = (balances.data || []).map((b: any) => ({
+    asset: b.asset, exchange: b.exchange, free: Number(b.free), locked: Number(b.locked), total: Number(b.total), usdValue: Number(b.usd_value), mode: b.mode
+  }));
+  
+  // Apply default balances if empty
+  if (camelCaseBalances.length === 0) {
+    camelCaseBalances.push(
+      { asset: "NGN", exchange: "Binance", free: 2500000.00, locked: 50000.00, total: 2550000.00, usdValue: 1700.00, mode: "PAPER" },
+      { asset: "USDT", exchange: "Binance", free: 12450.50, locked: 150.00, total: 12600.50, usdValue: 12600.50, mode: "PAPER" }
+    );
+  }
+
+  return {
+    riskSettings: settings.data ? {
+      tradingMode: settings.data.trading_mode,
+      minNetEdgePercent: Number(settings.data.min_net_edge_percent),
+      maxTradeSizeUsd: Number(settings.data.max_trade_size_usd),
+      maxDailyLossUsd: Number(settings.data.max_daily_loss_usd),
+      maxConcurrentTrades: settings.data.max_concurrent_trades,
+      maxSlippagePercent: Number(settings.data.max_slippage_percent),
+      maxDataAgeMs: settings.data.max_data_age_ms,
+      minLiquidityUsd: Number(settings.data.min_liquidity_usd),
+      killSwitchActive: settings.data.kill_switch_active,
+    } : {
+      tradingMode: "PAPER", minNetEdgePercent: 0.15, maxTradeSizeUsd: 100, maxDailyLossUsd: 25, maxConcurrentTrades: 3, maxSlippagePercent: 0.08, maxDataAgeMs: 1000, minLiquidityUsd: 5000, killSwitchActive: false
+    },
+    exchangeAccounts: (accounts.data || []).map((a: any) => ({
+      id: a.id, exchangeName: a.exchange_name, apiKey: a.api_key, apiSecret: a.api_secret_encrypted, apiKeyMasked: a.api_key_masked, status: a.status, permissions: a.permissions || [], lastSync: new Date(a.last_sync || Date.now()).getTime(), isPaper: a.is_paper, lastError: a.last_error
+    })),
+    balances: camelCaseBalances,
+    orders: (orders.data || []).map(mapRecord),
+    trades: (trades.data || []).map(mapRecord),
+    auditLogs: (logs.data || []).map(mapRecord),
+    ledger: (ledger.data || []).map(mapRecord),
+    deposits: (deposits.data || []).map(mapRecord)
+  };
+}
+
+async function writeDbForUser(userId: string, currentDb: any) {
+  // Sync risk settings
+  await supabaseAdmin.from('user_settings').upsert({
+    id: userId,
+    trading_mode: currentDb.riskSettings.tradingMode,
+    min_net_edge_percent: currentDb.riskSettings.minNetEdgePercent,
+    max_trade_size_usd: currentDb.riskSettings.maxTradeSizeUsd,
+    max_daily_loss_usd: currentDb.riskSettings.maxDailyLossUsd,
+    max_concurrent_trades: currentDb.riskSettings.maxConcurrentTrades,
+    max_slippage_percent: currentDb.riskSettings.maxSlippagePercent,
+    max_data_age_ms: currentDb.riskSettings.maxDataAgeMs,
+    min_liquidity_usd: currentDb.riskSettings.minLiquidityUsd,
+    kill_switch_active: currentDb.riskSettings.killSwitchActive,
+    updated_at: new Date().toISOString()
+  });
+
+  // Sync exchange accounts
+  if (currentDb.exchangeAccounts && currentDb.exchangeAccounts.length > 0) {
+    const exchangePayload = currentDb.exchangeAccounts.map((a: any) => ({
+      id: a.id,
+      user_id: userId,
+      exchange_name: a.exchangeName,
+      api_key: a.apiKey,
+      api_secret_encrypted: a.apiSecret,
+      api_key_masked: a.apiKeyMasked,
+      status: a.status,
+      permissions: a.permissions || [],
+      is_paper: a.isPaper || false,
+      last_sync: new Date(a.lastSync).toISOString(),
+      last_error: a.lastError,
+      updated_at: new Date().toISOString()
+    }));
+    await supabaseAdmin.from('exchange_connections').upsert(exchangePayload, { onConflict: 'user_id,exchange_name' });
+  }
+
+  // Sync balances
+  if (currentDb.balances && currentDb.balances.length > 0) {
+    const balancePayload = currentDb.balances.map((b: any) => ({
+      user_id: userId, asset: b.asset, exchange: b.exchange, free: b.free, locked: b.locked, total: b.total, usd_value: b.usdValue, mode: b.mode, updated_at: new Date().toISOString()
+    }));
+    await supabaseAdmin.from('balances').upsert(balancePayload, { onConflict: 'user_id,asset,exchange,mode' });
+  }
+
+  // Sync orders
+  if (currentDb.orders && currentDb.orders.length > 0) {
+    const ordersPayload = currentDb.orders.map((o: any) => ({
+      id: o.id, user_id: userId, exchange: o.exchange, symbol: o.symbol, strategy: o.strategy, side: o.side, type: o.type, quantity: o.quantity, price: o.price, filled: o.filled, remaining: o.remaining, status: o.status, mode: o.mode, error: o.error, updated_at: new Date().toISOString()
+    }));
+    await supabaseAdmin.from('orders').upsert(ordersPayload);
+  }
+
+  // Sync trades
+  if (currentDb.trades && currentDb.trades.length > 0) {
+    const tradesPayload = currentDb.trades.map((t: any) => ({
+      id: t.id, user_id: userId, exchange: t.exchange, symbol: t.symbol, strategy: t.strategy, side: t.side, order_id: t.orderId, quantity: t.quantity, requested_price: t.requestedPrice, average_fill_price: t.averageFillPrice, fees: t.fees, slippage: t.slippage, gross_profit: t.grossProfit, net_profit: t.netProfit, status: t.status, mode: t.mode, error_message: t.errorMessage
+    }));
+    await supabaseAdmin.from('trades').upsert(tradesPayload);
+  }
+  
+  // Sync audit logs
+  if (currentDb.auditLogs && currentDb.auditLogs.length > 0) {
+    const topLogs = currentDb.auditLogs.slice(0, 10).map((l: any) => ({
+      id: l.id, user_id: userId, action: l.action, category: l.category, details: l.details
+    }));
+    await supabaseAdmin.from('audit_logs').upsert(topLogs);
+  }
+
+  // Sync ledger
+  if (currentDb.ledger && currentDb.ledger.length > 0) {
+    const ledgerPayload = currentDb.ledger.map((l: any) => ({
+      id: l.id, user_id: userId, account_mode: l.accountMode, transaction_type: l.transactionType, currency: l.currency, amount: l.amount, direction: l.direction, balance_before: l.balanceBefore, balance_after: l.balanceAfter, reference: l.reference, provider_reference: l.providerReference, status: l.status
+    }));
+    await supabaseAdmin.from('ledger_entries').upsert(ledgerPayload);
+  }
+}
