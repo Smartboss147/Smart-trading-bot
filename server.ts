@@ -3,9 +3,7 @@ import { supabaseAdmin, getUserFromToken, isSupabaseConfigured } from "./server/
 import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import path from "path";
-import fs from "fs";
 import crypto from "crypto";
-import { ApiClient, SpotApi } from "gate-api";
 import Paystack from "@paystack/paystack-sdk";
 import cors from "cors";
 import { GateApiService } from "./server/GateApiService";
@@ -96,10 +94,7 @@ async function getGateApiForUser(userId: string) {
   const secret = decryptSecret(acc.apiSecret);
   if (!secret) return null;
 
-  const client = new ApiClient();
-  client.basePath = process.env.GATE_API_BASE_URL || 'https://api.gateio.ws/api/v4';
-  client.setApiKeySecret(acc.apiKey, secret);
-  return { client, spotApi: new SpotApi(client), apiKey: acc.apiKey, apiSecret: secret };
+  return { apiKey: acc.apiKey, apiSecret: secret };
 }
 
 let paystackClient: Paystack | null = null;
@@ -791,8 +786,7 @@ app.get("/api/balances", async (req, res) => {
 
   if (mode === "LIVE") {
     const gate = await getGateApiForUser((req as any).user.id);
-    const spotApi = gate?.spotApi;
-    if (!spotApi) { return res.status(503).json({ error: "Exchange unavailable: Gate.io API keys missing or invalid" });
+    if (!gate) { return res.status(503).json({ error: "Exchange unavailable: Gate.io API keys missing or invalid" });
     }
     try {
       console.log("[Server] Fetching live balances from Gate.io...");
@@ -801,14 +795,14 @@ app.get("/api/balances", async (req, res) => {
         setTimeout(() => reject(new Error("Gate.io balance request timed out (10s)")), 10000)
       );
       
-      const apiPromise = spotApi.listSpotAccounts();
+      const apiPromise = GateApiService.request('GET', '/spot/accounts', '', null, gate.apiKey, gate.apiSecret);
       const response = await Promise.race([apiPromise, timeoutPromise]) as any;
       
-      if (!response || !response.body) {
-        throw new Error("No response body from Gate.io");
+      if (!response || !response.success || !response.data) {
+        throw new Error(response?.error || "No valid response from Gate.io");
       }
       
-      const accounts = response.body;
+      const accounts = response.data;
 
       const liveBalances = accounts.map((acc: any) => ({
         asset: acc.currency,
@@ -1141,8 +1135,7 @@ app.post("/api/exchanges/refresh", async (req, res) => {
   const currentDb = await readDbForUser(userId);
   
   const gate = await getGateApiForUser(userId);
-  const spotApi = gate?.spotApi;
-  if (!spotApi) {
+  if (!gate) {
     return res.status(400).json({ 
       error: "No active session found. Please re-authenticate your exchange to verify status." 
     });
@@ -1198,10 +1191,6 @@ app.delete("/api/exchanges/:id", async (req, res) => {
   const ex = currentDb.exchangeAccounts.find((e: any) => e.id === id);
   
   if (ex) {
-    if (ex.exchangeName === "Gate.io" || ex.exchangeName === "Gate") {
-      delete process.env.GATE_API_KEY;
-      delete process.env.GATE_API_SECRET;
-    }
     currentDb.exchangeAccounts = currentDb.exchangeAccounts.filter((e: any) => e.id !== id);
     currentDb.auditLogs.unshift({
       id: `log-${Date.now()}`,
@@ -1382,32 +1371,36 @@ app.post("/api/orders", async (req, res) => {
   const tradingMode = currentDb.riskSettings.tradingMode;
 
   if (tradingMode === "LIVE") {
-    const gate = await getGateApiForUser(userId);
-    const spotApi = gate?.spotApi;
-    if (!spotApi) { 
-      return res.status(503).json({ error: "Exchange unavailable: Gate.io API keys missing or invalid" });
+  const gate = await getGateApiForUser(userId);
+  if (!gate) { 
+    return res.status(503).json({ error: "Exchange unavailable: Gate.io API keys missing or invalid" });
+  }
+
+  try {
+    const gateOrder: any = {
+      currency_pair: symbol.replace("USDT", "_USDT"),
+      side: side === "BUY" ? "buy" : "sell",
+      amount: quantity.toString(),
+      price: price.toString(),
+      type: "limit",
+      time_in_force: "ioc"
+    };
+
+    const response = await GateApiService.request('POST', '/spot/orders', '', gateOrder, gate.apiKey, gate.apiSecret);
+    
+    if (!response.success || !response.data) {
+      return res.status(400).json({ error: response.error || "Order was rejected by Gate.io" });
     }
-
-    try {
-      const gateOrder: any = {
-        currencyPair: symbol.replace("USDT", "_USDT"),
-        side: side === "BUY" ? "buy" : "sell",
-        amount: quantity.toString(),
-        price: price.toString(),
-        type: "limit",
-        timeInForce: "ioc"
-      };
-
-      const response = await spotApi.createOrder(gateOrder);
-      const orderData = response.body;
+    
+    const orderData = response.data;
 
       if (String(orderData.status) === "cancelled" || orderData.filledTotal === "0") {
         return res.status(400).json({ error: "Order was not filled on exchange" });
       }
 
       const orderId = orderData.id || `gate-ord-${now}`;
-      const filledQty = parseFloat(orderData.filledAmount || "0");
-      const avgPrice = parseFloat(orderData.avgDealPrice || price.toString());
+      const filledQty = parseFloat(orderData.filled_total || orderData.filledAmount || "0");
+      const avgPrice = parseFloat(orderData.avg_deal_price || orderData.avgDealPrice || price.toString());
       const fee = parseFloat(orderData.fee || "0");
 
       const newOrder = {
@@ -1565,8 +1558,7 @@ app.post("/api/execute-arbitrage", async (req, res) => {
 
   if (tradingMode === "LIVE") {
     const gate = await getGateApiForUser(userId);
-    const spotApi = gate?.spotApi;
-    if (!spotApi) { 
+    if (!gate) { 
       return res.status(503).json({ error: "Exchange unavailable: Gate.io live API keys are not configured or unauthenticated." });
     }
 
@@ -1578,15 +1570,18 @@ app.post("/api/execute-arbitrage", async (req, res) => {
       }
 
       const gateOrder = {
-        currencyPair: leg1.symbol,
+        currency_pair: leg1.symbol,
         side: leg1.side === "buy" ? "buy" : "sell",
         amount: "0.001", // Default small test amount
         price: leg1.price.toString(),
-        timeInForce: "ioc" // Immediate or Cancel
+        time_in_force: "ioc" // Immediate or Cancel
       };
 
-      const resp = await spotApi.createOrder(gateOrder as any);
-      const gateResult = resp.body;
+      const resp = await GateApiService.request('POST', '/spot/orders', '', gateOrder, gate.apiKey, gate.apiSecret);
+      if (!resp.success || !resp.data) {
+        throw new Error(resp.error || "Gate.io order execution failed");
+      }
+      const gateResult = resp.data;
 
       const orderId = crypto.randomUUID();
       const status = String(gateResult.status) === "closed" ? "FILLED" : (String(gateResult.status) === "open" ? "OPEN" : "CANCELLED");
@@ -1745,25 +1740,26 @@ app.get("/api/wallet", async (req, res) => {
   let liveBalances = currentDb.balances.filter((b: any) => b.mode === "LIVE");
 
   const gate = await getGateApiForUser((req as any).user.id);
-  const spotApi = gate?.spotApi;
-  if (spotApi) {
+  if (gate) {
     try {
-      const response = await spotApi.listSpotAccounts();
-      const accounts = response.body;
+      const response = await GateApiService.request('GET', '/spot/accounts', '', null, gate.apiKey, gate.apiSecret);
+      if (response.success && response.data) {
+        const accounts = response.data;
 
-      liveBalances = accounts.map((acc: any) => ({
-        asset: acc.currency,
-        exchange: "Gate.io",
-        free: parseFloat(acc.available),
-        locked: parseFloat(acc.locked),
-        total: parseFloat(acc.available) + parseFloat(acc.locked),
-        usdValue: 0,
-        mode: "LIVE"
-      }));
+        liveBalances = accounts.map((acc: any) => ({
+          asset: acc.currency,
+          exchange: "Gate.io",
+          free: parseFloat(acc.available),
+          locked: parseFloat(acc.locked),
+          total: parseFloat(acc.available) + parseFloat(acc.locked),
+          usdValue: 0,
+          mode: "LIVE"
+        }));
 
-      // Cache
-      currentDb.balances = currentDb.balances.filter((b: any) => b.mode !== "LIVE").concat(liveBalances);
-      await writeDbForUser((req as any).user.id, currentDb);
+        // Cache
+        currentDb.balances = currentDb.balances.filter((b: any) => b.mode !== "LIVE").concat(liveBalances);
+        await writeDbForUser((req as any).user.id, currentDb);
+      }
     } catch (e: any) {
       console.error("Failed to fetch Gate.io balances for wallet", e);
     }

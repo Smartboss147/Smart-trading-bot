@@ -22,6 +22,8 @@ export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
   }
 });
 
+const userCache = new Map<string, { user: any, timestamp: number }>();
+
 export async function getUserFromToken(authHeader?: string) {
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return { id: "default_user", email: "guest@apexquant.io" };
@@ -29,6 +31,12 @@ export async function getUserFromToken(authHeader?: string) {
   const token = authHeader.split(" ")[1];
   if (!token || token === "undefined" || token === "null" || !isSupabaseConfigured) {
     return { id: "default_user", email: "guest@apexquant.io" };
+  }
+
+  const now = Date.now();
+  const cached = userCache.get(token);
+  if (cached && now - cached.timestamp < 60000) { // Cache for 60 seconds
+    return cached.user;
   }
 
   try {
@@ -41,6 +49,8 @@ export async function getUserFromToken(authHeader?: string) {
     if (result.error || !result.data?.user) {
       return { id: "default_user", email: "guest@apexquant.io" };
     }
+    
+    userCache.set(token, { user: result.data.user, timestamp: now });
     return result.data.user;
   } catch (err) {
     return { id: "default_user", email: "guest@apexquant.io" };

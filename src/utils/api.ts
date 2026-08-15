@@ -1,4 +1,8 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+
+let cachedToken: string = "";
+let lastTokenFetch: number = 0;
+
 export async function safeFetchJson<T = any>(
   url: string,
   options?: RequestInit
@@ -21,13 +25,20 @@ export async function safeFetchJson<T = any>(
     // Get Supabase auth session token only if configured
     let token = "";
     if (isSupabaseConfigured) {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.access_token) {
-          token = session.access_token;
+      const now = Date.now();
+      if (now - lastTokenFetch < 10000 && cachedToken) {
+        token = cachedToken;
+      } else {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.access_token) {
+            token = session.access_token;
+            cachedToken = token;
+            lastTokenFetch = now;
+          }
+        } catch (e) {
+          console.warn("[API] Could not get Supabase session");
         }
-      } catch (e) {
-        console.warn("[API] Could not get Supabase session");
       }
     }
     
