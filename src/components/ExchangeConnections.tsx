@@ -295,35 +295,45 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
             </h3>
 
             {/* Minimum Permissions Notice for Gate.io */}
-            <div className="bg-cyan-950/40 border border-cyan-800/50 p-3.5 rounded-lg text-xs text-cyan-200 space-y-2">
-              <div className="flex items-center justify-between font-semibold text-cyan-300">
-                <span className="flex items-center gap-1.5">
-                  <HelpCircle className="w-4 h-4 text-cyan-400" /> Required Gate.io API Permissions
-                </span>
-                <a 
-                  href="https://www.gate.io/help/api" 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
-                  className="text-cyan-400 hover:text-cyan-300 flex items-center gap-1 text-[11px] underline"
-                >
-                  Gate.io Docs <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-              <p className="text-[11px] text-slate-300 leading-relaxed">
-                To prevent <span className="text-rose-400 font-mono">403 Forbidden</span> or signature errors, configure your Gate.io API key with exactly these scopes:
-              </p>
-              <div className="grid grid-cols-2 gap-2 pt-1 font-mono text-[11px]">
-                <div className="bg-slate-950 p-2 rounded border border-cyan-900/40 flex items-center gap-1.5 text-cyan-300">
-                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" /> Spot Trade (Enabled)
+            {exchangeName === "Gate.io" && (
+              <div className="bg-cyan-950/40 border border-cyan-800/60 p-4 rounded-lg text-xs text-cyan-200 space-y-3 shadow-inner">
+                <div className="flex items-center justify-between font-semibold text-cyan-300">
+                  <span className="flex items-center gap-1.5">
+                    <HelpCircle className="w-4 h-4 text-cyan-400 shrink-0" /> Gate.io Required API Permissions & 403 Prevention
+                  </span>
+                  <a 
+                    href="https://www.gate.io/help/api" 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="text-cyan-400 hover:text-cyan-300 flex items-center gap-1 text-[11px] underline bg-cyan-900/40 px-2 py-0.5 rounded border border-cyan-700/40"
+                  >
+                    Gate.io API Docs <ExternalLink className="w-3 h-3" />
+                  </a>
                 </div>
-                <div className="bg-slate-950 p-2 rounded border border-cyan-900/40 flex items-center gap-1.5 text-cyan-300">
-                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" /> Account Read (Enabled)
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  To prevent <span className="text-rose-400 font-mono font-semibold">403 Forbidden</span> errors during authentication, balance checks, or order execution, your Gate.io API key must be created with the following exact permissions:
+                </p>
+                <div className="bg-slate-950/80 p-3 rounded border border-cyan-900/50 space-y-2">
+                  <div className="text-[11px] font-bold text-slate-200 uppercase tracking-wider">Required Scopes:</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-[11px]">
+                    <div className="bg-slate-900 p-2 rounded border border-cyan-800/40 flex items-center gap-2 text-cyan-300">
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-sm shadow-cyan-400" />
+                      <span>Spot Trade</span>
+                      <span className="text-[10px] text-emerald-400 ml-auto font-sans bg-emerald-950/60 px-1.5 py-0.2 rounded">Required</span>
+                    </div>
+                    <div className="bg-slate-900 p-2 rounded border border-cyan-800/40 flex items-center gap-2 text-cyan-300">
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-sm shadow-cyan-400" />
+                      <span>Account Read</span>
+                      <span className="text-[10px] text-emerald-400 ml-auto font-sans bg-emerald-950/60 px-1.5 py-0.2 rounded">Required</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-[10px] text-slate-400 space-y-1">
+                  <div>• <strong className="text-slate-300">IP Whitelist:</strong> Leave unrestricted or whitelist your server deployment IP.</div>
+                  <div>• <strong className="text-slate-300">Withdrawals:</strong> Do NOT enable withdrawal permissions for security.</div>
                 </div>
               </div>
-              <div className="text-[10px] text-slate-400 italic">
-                * Note: Do NOT enable Withdrawal permissions. IP Whitelist should be set to unrestricted or configured for your deployment.
-              </div>
-            </div>
+            )}
             
             {submitError && (
               <div className="bg-rose-950/60 border border-rose-800/80 p-3.5 rounded-lg text-xs text-rose-200 space-y-2">

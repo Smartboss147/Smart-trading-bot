@@ -153,30 +153,44 @@ export class GateApiService {
         const errLabel = errorData?.label || `GATE_HTTP_${status}`;
         
         let errorCode = errLabel;
+        let friendlyMessage = errMessage;
+
         if (status === 401) {
-          if (errLabel === "INVALID_KEY" || errMessage.toLowerCase().includes("invalid key")) {
+          if (errLabel === "INVALID_KEY" || errMessage.toLowerCase().includes("invalid key") || errMessage.toLowerCase().includes("key not found")) {
             errorCode = "GATE_INVALID_KEY";
-          } else if (errLabel === "INVALID_SIGNATURE" || errMessage.toLowerCase().includes("signature")) {
+            friendlyMessage = "Invalid API Key: Gate.io rejected the API credentials (401 Unauthorized). Please verify that your API Key and Secret are correct and active.";
+          } else if (errLabel === "INVALID_SIGNATURE" || errMessage.toLowerCase().includes("signature") || errMessage.toLowerCase().includes("sign")) {
             errorCode = "GATE_INVALID_SIGNATURE";
+            friendlyMessage = "Invalid API Signature: Gate.io signature verification failed (401 Unauthorized). Please verify that your API Secret matches your API Key.";
           } else {
             errorCode = "GATE_AUTH_FAILED";
+            friendlyMessage = `Invalid API Key / Auth Failed (401 Unauthorized): ${errMessage}`;
           }
         } else if (status === 403) {
           const msgLower = (errMessage + " " + errLabel).toLowerCase();
-          if (msgLower.includes('ip') || msgLower.includes('whitelist') || msgLower.includes('forbidden')) {
+          if (msgLower.includes('ip') || msgLower.includes('whitelist') || msgLower.includes('restrict')) {
             errorCode = "GATE_IP_RESTRICTED";
+            friendlyMessage = "Permission Denied (IP Restricted): Gate.io rejected access due to IP restrictions (403 Forbidden). Please check your IP whitelist settings.";
           } else {
             errorCode = "GATE_PERMISSION_DENIED";
+            friendlyMessage = "Permission Denied: Gate.io rejected access (403 Forbidden). Please ensure your API Key has 'Spot Trade' and 'Account Read' permissions enabled, and avoid enabling 'Withdrawal' permissions.";
           }
+        } else if (status === 408 || status === 504) {
+          errorCode = "GATE_TIMEOUT";
+          friendlyMessage = "Gate API Timeout: The request to Gate.io timed out. The exchange servers took too long to respond. Please try again.";
         } else if (status === 429) {
           errorCode = "GATE_RATE_LIMIT";
+          friendlyMessage = "Gate API Rate Limit: Rate limit exceeded (429 Too Many Requests). Please wait a moment before retrying.";
         } else if (status >= 500) {
           errorCode = "GATE_SERVER_ERROR";
+          friendlyMessage = `Gate API Server Error (${status}): Gate.io is experiencing internal issues. Please try again later.`;
+        } else {
+          friendlyMessage = `Gate.io API error (${status}): ${errMessage}`;
         }
 
         return {
           success: false,
-          error: errMessage,
+          error: friendlyMessage,
           code: errorCode,
           status,
           requestId,
