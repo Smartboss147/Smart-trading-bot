@@ -59,12 +59,23 @@ export async function safeFetchJson<T = any>(
 
     console.log(`[API] Fetching ${fullUrl}...`);
     let res: Response;
+    let attempts = 0;
+    const maxAttempts = 2;
     try {
-      res = await fetch(fullUrl, fetchOptions);
-    } catch (fetchErr: any) {
-      // Catch specific errors like AbortError or TypeError
-      console.error(`[API] Native fetch failed for ${fullUrl}:`, fetchErr.name, fetchErr.message);
-      throw fetchErr; 
+      while (true) {
+        try {
+          attempts++;
+          res = await fetch(fullUrl, fetchOptions);
+          break;
+        } catch (fetchErr: any) {
+          if (attempts >= maxAttempts) {
+            console.error(`[API] Native fetch failed for ${fullUrl} after ${attempts} attempts:`, fetchErr.name, fetchErr.message);
+            throw fetchErr;
+          }
+          console.warn(`[API] Transient fetch failure for ${fullUrl} (attempt ${attempts}), retrying in 500ms...`);
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
     } finally {
       clearTimeout(timeoutId);
     }
