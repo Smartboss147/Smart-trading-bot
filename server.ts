@@ -896,6 +896,90 @@ app.get("/api/admin/gate-diagnostics", async (req, res) => {
   });
 });
 
+app.all("/api/exchanges/gateio/diagnostics", async (req, res) => {
+  const userId = (req as any).user?.id || "default_user";
+  
+  let apiKey = req.body?.apiKey || req.query?.apiKey;
+  let apiSecret = req.body?.apiSecret || req.query?.apiSecret;
+
+  if (!apiKey || !apiSecret) {
+    const gateAcc = await getGateApiForUser(userId);
+    if (gateAcc && gateAcc.apiKey && gateAcc.apiSecret) {
+      apiKey = gateAcc.apiKey;
+      apiSecret = gateAcc.apiSecret;
+    } else if (process.env.GATE_API_KEY && process.env.GATE_API_SECRET) {
+      apiKey = process.env.GATE_API_KEY;
+      apiSecret = process.env.GATE_API_SECRET;
+    }
+  }
+
+  const maskKey = (k: string) => {
+    if (!k || typeof k !== 'string') return null;
+    if (k.length <= 8) return '****';
+    return `${k.substring(0, 4)}****${k.substring(k.length - 4)}`;
+  };
+
+  const diagnostics: any = {
+    success: false,
+    timestamp: new Date().toISOString(),
+    network: { reachable: false, latencyMs: 0 },
+    gatePublicApi: { reachable: false, status: 0 },
+    gateAuthenticatedApi: { tested: false, status: 0 },
+    config: {
+      baseUrl: process.env.GATE_API_BASE_URL || "https://api.gateio.ws/api/v4",
+      keyPresent: !!apiKey,
+      keyMasked: maskKey(apiKey),
+      secretPresent: !!apiSecret
+    }
+  };
+
+  // 1. Test public API connectivity
+  try {
+    const pubStart = Date.now();
+    const pubRes = await fetch(`${process.env.GATE_API_BASE_URL || "https://api.gateio.ws/api/v4"}/spot/currencies`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(8000)
+    });
+    diagnostics.network.reachable = true;
+    diagnostics.network.latencyMs = Date.now() - pubStart;
+    diagnostics.gatePublicApi = {
+      reachable: pubRes.status === 200,
+      status: pubRes.status
+    };
+  } catch (err: any) {
+    diagnostics.network.reachable = false;
+    diagnostics.gatePublicApi = {
+      reachable: false,
+      status: 0,
+      error: err.message
+    };
+  }
+
+  // 2. Test authenticated handshake against /spot/accounts
+  if (apiKey && apiSecret) {
+    diagnostics.gateAuthenticatedApi.tested = true;
+    try {
+      const authTest = await GateApiService.request('GET', '/spot/accounts', '', null, apiKey, apiSecret);
+      diagnostics.gateAuthenticatedApi.status = authTest.status;
+      diagnostics.gateAuthenticatedApi.success = authTest.success;
+      diagnostics.gateAuthenticatedApi.code = authTest.code;
+      diagnostics.gateAuthenticatedApi.message = authTest.error || (authTest.success ? "Authentication successful" : "Authentication failed");
+      diagnostics.success = authTest.success;
+    } catch (err: any) {
+      diagnostics.gateAuthenticatedApi.status = 500;
+      diagnostics.gateAuthenticatedApi.success = false;
+      diagnostics.gateAuthenticatedApi.code = 'DIAGNOSTICS_ERROR';
+      diagnostics.gateAuthenticatedApi.message = err.message;
+    }
+  } else {
+    diagnostics.gateAuthenticatedApi.tested = false;
+    diagnostics.gateAuthenticatedApi.message = "No API credentials provided or found in user session / environment.";
+  }
+
+  return res.json(diagnostics);
+});
+
 // STEP 1 & 3: Bypass Firebase temporarily for direct Gate.io API credential testing
 app.post("/api/admin/direct-gate-test", async (req, res) => {
   const requestId = `gate-direct-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
