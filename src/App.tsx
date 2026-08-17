@@ -295,7 +295,7 @@ export default function App() {
     setActiveTab("orders");
   };
 
-  const handleAddExchange = async (exchangeName: string, apiKey: string, apiSecret: string) => {
+  const handleAddExchange = async (exchangeName: string, apiKey: string, apiSecret: string, force: boolean = false) => {
     // Sanitize keys to remove all non-printable characters, spaces, and hidden Unicode symbols
     const sanitize = (str: string) => str.trim().replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, "");
     
@@ -306,7 +306,7 @@ export default function App() {
       const res = await safeFetchJson("/api/exchanges", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ exchangeName, apiKey: cleanKey, apiSecret: cleanSecret })
+        body: JSON.stringify({ exchangeName, apiKey: cleanKey, apiSecret: cleanSecret, force })
       });
 
       if (!res.ok) {

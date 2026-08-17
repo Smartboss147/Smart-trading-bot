@@ -5,7 +5,7 @@ import { safeFetchJson } from "../utils/api";
 
 interface ExchangeConnectionsProps {
   exchanges: ExchangeAccount[];
-  onAddExchange: (exchangeName: string, apiKey: string, apiSecret: string) => Promise<{ success: boolean; error?: string }>;
+  onAddExchange: (exchangeName: string, apiKey: string, apiSecret: string, force?: boolean) => Promise<{ success: boolean; error?: string }>;
   onDeleteExchange?: (id: string) => Promise<void>;
   onRefresh?: () => void;
 }
@@ -57,14 +57,14 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
     setShowAddModal(true);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent, force: boolean = false) => {
     e.preventDefault();
     if (!apiKey || !apiSecret) return;
 
     setIsSubmitting(true);
     setSubmitError(null);
 
-    const result = await onAddExchange(exchangeName, apiKey, apiSecret);
+    const result = await onAddExchange(exchangeName, apiKey, apiSecret, force);
     setIsSubmitting(false);
 
     if (result.success) {
@@ -75,6 +75,11 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
     } else {
       setSubmitError(result.error || "Authentication failed. Please check your credentials.");
     }
+  };
+
+  const handleForceConnect = () => {
+    // Trigger submit with force=true
+    handleSubmit({ preventDefault: () => {} } as any, true);
   };
 
   return (
@@ -221,6 +226,18 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
                     <li>If you have <span className="text-slate-200">IP Whitelist</span> configured on Gate.io, allow unrestricted access or add your server IP.</li>
                     <li>Double check that the API Key and Secret are copied completely without extra spaces.</li>
                   </ul>
+                </div>
+
+                <div className="pt-1 flex items-center justify-between border-t border-rose-950/60 mt-2">
+                  <span className="text-[11px] text-rose-300/80">Experiencing upstream server issues?</span>
+                  <button
+                    type="button"
+                    onClick={handleForceConnect}
+                    disabled={isSubmitting}
+                    className="px-3 py-1 bg-rose-900 hover:bg-rose-800 text-rose-100 rounded text-[11px] font-semibold transition-all shadow disabled:opacity-50"
+                  >
+                    {isSubmitting ? "Connecting..." : "Force Connect / Save Anyway"}
+                  </button>
                 </div>
               </div>
             )}

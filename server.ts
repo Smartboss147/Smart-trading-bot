@@ -957,7 +957,7 @@ app.post("/api/exchanges", async (req, res) => {
     }
 
     const currentDb = await readDbForUser(userId);
-    let { exchangeName, apiKey, apiSecret } = req.body;
+    let { exchangeName, apiKey, apiSecret, force } = req.body;
     
     // Robust sanitization for keys often copied with invisible characters
     const sanitize = (str: any) => {
@@ -970,7 +970,7 @@ app.post("/api/exchanges", async (req, res) => {
     apiKey = sanitize(apiKey);
     apiSecret = sanitize(apiSecret);
 
-    console.log(`[Server] Connection attempt [${requestId}] for ${exchangeName} by user [${userId}]. Key length: ${apiKey?.length}`);
+    console.log(`[Server] Connection attempt [${requestId}] for ${exchangeName} by user [${userId}]. Key length: ${apiKey?.length}, force: ${!!force}`);
 
     if (!apiKey || !apiSecret) {
       return res.status(400).json({
@@ -995,29 +995,35 @@ app.post("/api/exchanges", async (req, res) => {
         const testResult = await GateApiService.testConnection(apiKey, apiSecret);
 
         if (!testResult.success) {
-          const errCode = testResult.code || "GATE_AUTH_FAILED";
-          const errStatus = testResult.status || 401;
-          let errMessage = testResult.error || "Gate.io authentication failed.";
-          
-          if (errCode === "GATE_INVALID_KEY" || /invalid.*key/i.test(errMessage)) {
-            errMessage = "Gate.io rejected the API Key. Please ensure the key was copied accurately from your Gate.io API Management page.";
-          } else if (errCode === "GATE_INVALID_SIGNATURE" || /signature/i.test(errMessage)) {
-            errMessage = "Gate.io signature verification failed. Please verify that the API Secret matches this API Key.";
-          } else if (errCode === "GATE_IP_RESTRICTED" || /ip|whitelist|forbidden/i.test(errMessage)) {
-            errMessage = "Gate.io rejected this server IP. In your Gate.io API Key settings, set IP Permissions to Unrestricted or add your current server.";
-          } else if (errCode === "GATE_PERMISSION_DENIED" || /permission/i.test(errMessage)) {
-            errMessage = "The Gate.io API key does not have the required Spot Read and Trade permissions.";
-          }
+          if (force) {
+            console.log(`[GateAuth ${requestId}] Validation failed (${testResult.error}), but force=true was specified. Bypassing and persisting credentials.`);
+          } else {
+            const errCode = testResult.code || "GATE_AUTH_FAILED";
+            const errStatus = testResult.status || 401;
+            let errMessage = testResult.error || "Gate.io authentication failed.";
+            
+            if (errCode === "GATE_INVALID_KEY" || /invalid.*key/i.test(errMessage)) {
+              errMessage = "Gate.io rejected the API Key. Please ensure the key was copied accurately from your Gate.io API Management page.";
+            } else if (errCode === "GATE_INVALID_SIGNATURE" || /signature/i.test(errMessage)) {
+              errMessage = "Gate.io signature verification failed. Please verify that the API Secret matches this API Key.";
+            } else if (errCode === "GATE_IP_RESTRICTED" || /ip|whitelist|forbidden/i.test(errMessage)) {
+              errMessage = "Gate.io rejected this server IP. In your Gate.io API Key settings, set IP Permissions to Unrestricted or add your current server.";
+            } else if (errCode === "GATE_PERMISSION_DENIED" || /permission/i.test(errMessage)) {
+              errMessage = "The Gate.io API key does not have the required Spot Read and Trade permissions.";
+            } else if (/server error|internal server error|gate\.io api error/i.test(errMessage)) {
+              errMessage = "Gate.io returned a temporary server error. You can click 'Force Connect / Save Anyway' below to store your keys.";
+            }
 
-          return res.status(errStatus).json({
-            success: false,
-            exchange: "gate",
-            status: "authentication_failed",
-            code: errCode,
-            error: errMessage,
-            message: errMessage,
-            requestId: testResult.requestId || requestId
-          });
+            return res.status(errStatus).json({
+              success: false,
+              exchange: "gate",
+              status: "authentication_failed",
+              code: errCode,
+              error: errMessage,
+              message: errMessage,
+              requestId: testResult.requestId || requestId
+            });
+          }
         }
         
         if (testResult.data && Array.isArray(testResult.data)) {
@@ -1027,42 +1033,45 @@ app.post("/api/exchanges", async (req, res) => {
         console.log(`[GateAuth ${requestId}] Success: Verified via GateApiService`);
       } catch (err: any) {
         console.error(`[GateAuth ${requestId}] Validation failed:`, err.message);
+        if (force) {
+          console.log(`[GateAuth ${requestId}] Exception during validation, but force=true specified. Bypassing.`);
+        } else {
+          let errorCode = "GATE_AUTH_FAILED";
+          let errorMessage = "Gate.io authentication failed. Check that the API key and API secret are correct.";
+          let httpStatus = 401;
+          const errText = (err.message || "").toLowerCase();
+          if (errText.includes("timeout") || errText.includes("gate_timeout")) {
+            errorCode = "GATE_TIMEOUT";
+            errorMessage = "Gate.io could not be reached in time (8s). You can click 'Force Connect / Save Anyway' to store your keys.";
+            httpStatus = 504;
+          } else if (errText.includes("403") || errText.includes("ip") || errText.includes("whitelist")) {
+            errorCode = "GATE_IP_BLOCKED";
+            errorMessage = "Gate.io rejected this server IP because of the API key IP whitelist restrictions.";
+            httpStatus = 403;
+          } else if (errText.includes("permission") || errText.includes("unauthorized") || errText.includes("spot")) {
+            errorCode = "GATE_PERMISSION_DENIED";
+            errorMessage = "The Gate.io API key does not have the required spot permissions.";
+            httpStatus = 403;
+          } else if (errText.includes("429") || errText.includes("rate limit")) {
+            errorCode = "GATE_RATE_LIMIT";
+            errorMessage = "Gate.io rate limit reached. Please wait and try again.";
+            httpStatus = 429;
+          } else if (errText.includes("5") && (errText.includes("server") || errText.includes("internal"))) {
+            errorCode = "GATE_SERVER_ERROR";
+            errorMessage = "Gate.io is temporarily returning a server error. You can use 'Force Connect / Save Anyway' below.";
+            httpStatus = 502;
+          }
 
-        let errorCode = "GATE_AUTH_FAILED";
-        let errorMessage = "Gate.io authentication failed. Check that the API key and API secret are correct.";
-        let httpStatus = 401;
-
-        const errText = (err.message || "").toLowerCase();
-        if (errText.includes("timeout") || errText.includes("gate_timeout")) {
-          errorCode = "GATE_TIMEOUT";
-          errorMessage = "Gate.io could not be reached in time (8s). Please try again or check network connectivity.";
-          httpStatus = 504;
-        } else if (errText.includes("403") || errText.includes("ip") || errText.includes("whitelist")) {
-          errorCode = "GATE_IP_BLOCKED";
-          errorMessage = "Gate.io rejected this server IP because of the API key IP whitelist restrictions.";
-          httpStatus = 403;
-        } else if (errText.includes("permission") || errText.includes("unauthorized") || errText.includes("spot")) {
-          errorCode = "GATE_PERMISSION_DENIED";
-          errorMessage = "The Gate.io API key does not have the required spot permissions.";
-          httpStatus = 403;
-        } else if (errText.includes("429") || errText.includes("rate limit")) {
-          errorCode = "GATE_RATE_LIMIT";
-          errorMessage = "Gate.io rate limit reached. Please wait and try again.";
-          httpStatus = 429;
-        } else if (errText.includes("5") && (errText.includes("server") || errText.includes("internal"))) {
-          errorCode = "GATE_SERVER_ERROR";
-          errorMessage = "Gate.io is temporarily returning a server error. Please try again later.";
-          httpStatus = 502;
+          return res.status(httpStatus).json({
+            success: false,
+            exchange: "gate",
+            status: "authentication_failed",
+            code: errorCode,
+            error: errorMessage,
+            message: errorMessage,
+            requestId
+          });
         }
-
-        return res.status(httpStatus).json({
-          success: false,
-          exchange: "gate",
-          status: "authentication_failed",
-          code: errorCode,
-          message: errorMessage,
-          requestId
-        });
       }
     }
 
