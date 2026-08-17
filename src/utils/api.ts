@@ -20,7 +20,7 @@ export async function safeFetchJson<T = any>(
       console.warn("[API] Could not determine window.location.origin");
     }
 
-    const fullUrl = url.startsWith("/") ? `${origin}${url}` : url;
+    const fullUrl = url;
     
     // Get Supabase auth session token only if configured
     let token = "";
@@ -56,7 +56,7 @@ export async function safeFetchJson<T = any>(
     console.log(`[API] Fetching ${fullUrl}...`);
     let res: Response;
     let attempts = 0;
-    const maxAttempts = 2;
+    const maxAttempts = 3;
 
     while (true) {
       const controller = new AbortController();
@@ -72,11 +72,11 @@ export async function safeFetchJson<T = any>(
       } catch (fetchErr: any) {
         clearTimeout(timeoutId);
         if (attempts >= maxAttempts) {
-          console.error(`[API] Native fetch failed for ${fullUrl} after ${attempts} attempts:`, fetchErr.name, fetchErr.message);
+          console.warn(`[API] Native fetch failed for ${fullUrl} after ${attempts} attempts: ${fetchErr.message}. Returning offline fallback if applicable.`);
           throw fetchErr;
         }
-        console.warn(`[API] Transient fetch failure for ${fullUrl} (attempt ${attempts}): ${fetchErr.message}, retrying in 500ms...`);
-        await new Promise(r => setTimeout(r, 500));
+        console.warn(`[API] Transient fetch failure for ${fullUrl} (attempt ${attempts}): ${fetchErr.message}, retrying in 1000ms...`);
+        await new Promise(r => setTimeout(r, 1000));
       }
     }
     

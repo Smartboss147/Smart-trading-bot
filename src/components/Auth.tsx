@@ -124,9 +124,14 @@ export const Auth: React.FC<AuthProps> = ({ onSuccess }) => {
       // If in offline/local mock mode or already verified
       onSuccess?.({ user: appUser, access_token: idToken });
     } catch (err: any) {
-      console.error('[Auth] Google authentication error:', err);
-      const friendlyMsg = getFriendlyFirebaseErrorMessage(err);
-      setError(friendlyMsg);
+      if (err?.code === 'auth/popup-closed-by-user' || err?.message?.includes('popup-closed-by-user')) {
+        console.warn('[Auth] Google sign-in popup closed by user.');
+        setError('Sign-in cancelled. Please click "Sign in with Google" again whenever you are ready.');
+      } else {
+        console.error('[Auth] Google authentication error:', err);
+        const friendlyMsg = getFriendlyFirebaseErrorMessage(err);
+        setError(friendlyMsg);
+      }
     } finally {
       setGoogleLoading(false);
     }
