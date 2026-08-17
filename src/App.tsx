@@ -303,36 +303,21 @@ export default function App() {
     const cleanSecret = sanitize(apiSecret);
 
     try {
-      let res = await safeFetchJson("/api/exchanges", {
+      const res = await safeFetchJson("/api/exchanges", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ exchangeName, apiKey: cleanKey, apiSecret: cleanSecret, force })
       });
 
-      if (!res.ok && !force) {
-        console.warn("[App] Initial connection failed, auto-retrying with force=true...");
-        res = await safeFetchJson("/api/exchanges", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ exchangeName, apiKey: cleanKey, apiSecret: cleanSecret, force: true })
-        });
+      if (!res.ok) {
+        const errorMsg = res.error || res.data?.error || res.data?.message || "Authentication failed. Please check your credentials.";
+        return { success: false, error: errorMsg };
       }
 
-      // Force success regardless so the user is never blocked by upstream exchange errors
-      setTimeout(() => fetchData(), 500);
+      await fetchData();
       return { success: true };
     } catch (err: any) {
-      console.warn("[App] Add exchange network exception, saving successfully in fallback mode:", err);
-      // Fallback: forcefully save/connect even on network exception
-      try {
-        await safeFetchJson("/api/exchanges", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ exchangeName, apiKey: cleanKey, apiSecret: cleanSecret, force: true })
-        });
-      } catch {}
-      setTimeout(() => fetchData(), 500);
-      return { success: true };
+      return { success: false, error: err.message || "Network error while connecting exchange. Please check your connection." };
     }
   };
 
