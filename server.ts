@@ -944,6 +944,67 @@ app.post("/api/admin/direct-gate-test", async (req, res) => {
   }
 });
 
+app.post("/api/exchanges/gateio/test", async (req, res) => {
+  const requestId = `gate-test-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  try {
+    let { apiKey, apiSecret } = req.body;
+    const sanitize = (str: any) => {
+      if (typeof str !== 'string') return "";
+      return str.trim().replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, "");
+    };
+    apiKey = sanitize(apiKey);
+    apiSecret = sanitize(apiSecret);
+
+    if (!apiKey || !apiSecret) {
+      const userId = (req as any).user?.id || "default_user";
+      const gate = await getGateApiForUser(userId);
+      if (gate && gate.apiKey && gate.apiSecret) {
+        apiKey = gate.apiKey;
+        apiSecret = gate.apiSecret;
+      }
+    }
+
+    if (!apiKey || !apiSecret) {
+      return res.status(400).json({
+        success: false,
+        exchange: "gateio",
+        connected: false,
+        code: "INVALID_INPUT",
+        message: "API Key and API Secret are required or no active connection found",
+        requestId
+      });
+    }
+
+    const testResult = await GateApiService.testConnection(apiKey, apiSecret);
+    if (testResult.success) {
+      return res.json({
+        success: true,
+        exchange: "gateio",
+        connected: true,
+        requestId: testResult.requestId || requestId
+      });
+    } else {
+      return res.status(testResult.status || 401).json({
+        success: false,
+        exchange: "gateio",
+        connected: false,
+        code: testResult.code || "GATE_AUTH_FAILED",
+        message: testResult.error || "Gate.io authentication failed",
+        requestId: testResult.requestId || requestId
+      });
+    }
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      exchange: "gateio",
+      connected: false,
+      code: "GATE_SERVER_ERROR",
+      message: err.message || "Internal server error during Gate.io connection test",
+      requestId
+    });
+  }
+});
+
 app.post("/api/exchanges", async (req, res) => {
   const requestId = `gate-connect-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   try {
@@ -995,14 +1056,53 @@ app.post("/api/exchanges", async (req, res) => {
         const testResult = await GateApiService.testConnection(apiKey, apiSecret);
 
         if (!testResult.success) {
-          console.log(`[GateAuth ${requestId}] Notice: Validation returned non-success (${testResult.error}), but proceeding with connection successfully in hybrid/simulation mode.`);
+          if (force) {
+            console.log(`[GateAuth ${requestId}] Validation failed (${testResult.error}), but force=true was specified. Bypassing and persisting credentials.`);
+          } else {
+            const errCode = testResult.code || "GATE_AUTH_FAILED";
+            const errStatus = testResult.status || 401;
+            let errMessage = testResult.error || "Gate.io authentication failed.";
+            
+            if (errCode === "GATE_INVALID_KEY" || /invalid.*key/i.test(errMessage)) {
+              errMessage = "Gate.io rejected the API Key. Please ensure the key was copied accurately from your Gate.io API Management page.";
+            } else if (errCode === "GATE_INVALID_SIGNATURE" || /signature/i.test(errMessage)) {
+              errMessage = "Gate.io signature verification failed. Please verify that the API Secret matches this API Key.";
+            } else if (errCode === "GATE_IP_RESTRICTED" || /ip|whitelist|forbidden/i.test(errMessage)) {
+              errMessage = "Gate.io rejected this server IP. In your Gate.io API Key settings, set IP Permissions to Unrestricted or add your current server.";
+            } else if (errCode === "GATE_PERMISSION_DENIED" || /permission/i.test(errMessage)) {
+              errMessage = "The Gate.io API key does not have the required Spot Read and Trade permissions.";
+            }
+
+            return res.status(errStatus).json({
+              success: false,
+              exchange: "gate",
+              status: "authentication_failed",
+              code: errCode,
+              error: errMessage,
+              message: errMessage,
+              requestId: testResult.requestId || requestId
+            });
+          }
         } else if (testResult.data && Array.isArray(testResult.data)) {
           initialBalances = testResult.data;
         }
 
-        console.log(`[GateAuth ${requestId}] Completed: Connection established successfully`);
+        console.log(`[GateAuth ${requestId}] Completed: Connection verified successfully`);
       } catch (err: any) {
-        console.warn(`[GateAuth ${requestId}] Validation warning (proceeding anyway):`, err.message);
+        console.error(`[GateAuth ${requestId}] Validation failed:`, err.message);
+        if (force) {
+          console.log(`[GateAuth ${requestId}] Exception during validation, but force=true specified. Bypassing.`);
+        } else {
+          return res.status(401).json({
+            success: false,
+            exchange: "gate",
+            status: "authentication_failed",
+            code: "GATE_AUTH_FAILED",
+            error: err.message || "Gate.io authentication failed.",
+            message: err.message || "Gate.io authentication failed.",
+            requestId
+          });
+        }
       }
     }
 

@@ -41,15 +41,31 @@ export class GateApiService {
       throw new Error("GATE_CREDENTIALS_MISSING: API Key and Secret are required for signing.");
     }
 
+    // Ensure integer Unix timestamp in seconds (not milliseconds) as required by Gate.io API v4
     const timestamp = Math.floor(Date.now() / 1000).toString();
-    const bodyString = typeof payload === "string" ? payload : (payload && Object.keys(payload).length > 0 ? JSON.stringify(payload) : "");
+    
+    // For POST/PUT requests, stringify payload and hash with SHA-512
+    const bodyString = typeof payload === "string" 
+      ? payload 
+      : (payload && Object.keys(payload).length > 0 ? JSON.stringify(payload) : "");
     const hashedBody = crypto.createHash('sha512').update(bodyString).digest('hex');
     
     // Ensure canonical path correctly includes /api/v4 prefix as required by Gate.io API v4 spec
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
     const canonicalPath = cleanEndpoint.startsWith('/api/v4') ? cleanEndpoint : `/api/v4${cleanEndpoint}`;
 
-    const signString = `${method.toUpperCase()}\n${canonicalPath}\n${queryString}\n${hashedBody}\n${timestamp}`;
+    // Normalize and sort query string alphabetically by parameter name for GET/DELETE requests
+    let sortedQueryString = "";
+    if (queryString) {
+      const cleanQuery = queryString.startsWith('?') ? queryString.substring(1) : queryString;
+      if (cleanQuery) {
+        const params = new URLSearchParams(cleanQuery);
+        const sortedEntries = Array.from(params.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+        sortedQueryString = sortedEntries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+      }
+    }
+
+    const signString = `${method.toUpperCase()}\n${canonicalPath}\n${sortedQueryString}\n${hashedBody}\n${timestamp}`;
     const sign = crypto.createHmac('sha512', apiSecret.trim()).update(signString).digest('hex');
 
     return {
@@ -78,7 +94,19 @@ export class GateApiService {
     // Ensure root URL is correct
     const rootBase = this.baseURL.replace(/\/api\/v4\/?$/, '');
     const canonicalPath = cleanEndpoint.startsWith('/api/v4') ? cleanEndpoint : `/api/v4${cleanEndpoint}`;
-    const url = `${rootBase}${canonicalPath}${queryParams ? `?${queryParams}` : ""}`;
+
+    // Sort query params for URL construction as well
+    let sortedQueryString = "";
+    if (queryParams) {
+      const cleanQuery = queryParams.startsWith('?') ? queryParams.substring(1) : queryParams;
+      if (cleanQuery) {
+        const params = new URLSearchParams(cleanQuery);
+        const sortedEntries = Array.from(params.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+        sortedQueryString = sortedEntries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+      }
+    }
+
+    const url = `${rootBase}${canonicalPath}${sortedQueryString ? `?${sortedQueryString}` : ""}`;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);

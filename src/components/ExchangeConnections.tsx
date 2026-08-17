@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Key, Plus, Shield, Trash2, AlertCircle, RefreshCw, Layers } from "lucide-react";
+import { Key, Plus, Shield, Trash2, AlertCircle, RefreshCw, Layers, CheckCircle2, ExternalLink, HelpCircle } from "lucide-react";
 import { ExchangeAccount } from "../types";
 import { safeFetchJson } from "../utils/api";
 
@@ -20,6 +20,10 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  // Test connection states per account id
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string; code?: string }>>({});
+
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
@@ -36,6 +40,43 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
       alert("Network error while refreshing accounts.");
     } finally {
       setIsRefreshing(false);
+    }
+  };
+
+  const handleTestConnection = async (ex: ExchangeAccount) => {
+    setTestingId(ex.id);
+    setTestResults(prev => ({ ...prev, [ex.id]: { success: false, message: "Testing..." } }));
+
+    try {
+      const res = await safeFetchJson("/api/exchanges/gateio/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+
+      if (res.ok && res.data?.success) {
+        setTestResults(prev => ({
+          ...prev,
+          [ex.id]: { success: true, message: "Connection verified successfully (Gate.io v4 Spot API)" }
+        }));
+      } else {
+        const errorData = res.data;
+        setTestResults(prev => ({
+          ...prev,
+          [ex.id]: { 
+            success: false, 
+            message: errorData?.error || errorData?.message || res.error || "Gate.io authentication or permission check failed",
+            code: errorData?.code || "GATE_AUTH_FAILED"
+          }
+        }));
+      }
+    } catch (err: any) {
+      setTestResults(prev => ({
+        ...prev,
+        [ex.id]: { success: false, message: err.message || "Network error during connection test", code: "NETWORK_ERROR" }
+      }));
+    } finally {
+      setTestingId(null);
     }
   };
 
@@ -78,7 +119,6 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
   };
 
   const handleForceConnect = () => {
-    // Trigger submit with force=true
     handleSubmit({ preventDefault: () => {} } as any, true);
   };
 
@@ -127,86 +167,163 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {(exchanges || []).filter(ex => ex && ex.id).map(ex => (
-            <div key={ex.id} className="bg-slate-900 border border-slate-800 p-5 rounded-lg flex flex-col justify-between relative space-y-4">
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Key className="w-5 h-5 text-cyan-400" />
-                    <div>
-                      <h3 className="font-bold text-slate-100 text-base">{ex.exchangeName || "Unknown Exchange"}</h3>
-                      <span className="text-[10px] text-slate-500 flex items-center gap-1 mt-0.5">
-                        <Layers className="w-3 h-3" /> {ex.accountType || "Spot Trading Account"}
+          {(exchanges || []).filter(ex => ex && ex.id).map(ex => {
+            const testResult = testResults[ex.id];
+            const isTesting = testingId === ex.id;
+            const isGate = /gate/i.test(ex.exchangeName);
+
+            return (
+              <div key={ex.id} className="bg-slate-900 border border-slate-800 p-5 rounded-lg flex flex-col justify-between relative space-y-4">
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Key className="w-5 h-5 text-cyan-400" />
+                      <div>
+                        <h3 className="font-bold text-slate-100 text-base">{ex.exchangeName || "Unknown Exchange"}</h3>
+                        <span className="text-[10px] text-slate-500 flex items-center gap-1 mt-0.5">
+                          <Layers className="w-3 h-3" /> {ex.accountType || "Spot Trading Account"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 ${
+                        ex.status === "CONNECTED" 
+                          ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" 
+                          : "bg-rose-500/10 text-rose-400 border border-rose-500/30"
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${ex.status === "CONNECTED" ? "bg-emerald-400" : "bg-rose-400"}`} />
+                        {ex.status || "DISCONNECTED"}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleOpenUpdate(ex)}
+                          className="p-1 text-slate-500 hover:text-cyan-400 transition-colors"
+                          title="Update Keys / Re-authenticate"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </button>
+                        {onDeleteExchange && (
+                          <button
+                            onClick={() => onDeleteExchange(ex.id)}
+                            className="p-1 text-slate-500 hover:text-rose-400 transition-colors"
+                            title="Disconnect Exchange"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 text-xs font-mono text-slate-400">
+                    <div className="flex justify-between bg-slate-950 p-2 rounded border border-slate-800">
+                      <span>API Key:</span>
+                      <span className="text-slate-200">{ex.apiKeyMasked || "••••••••"}</span>
+                    </div>
+                    <div className="flex justify-between bg-slate-950 p-2 rounded border border-slate-800 items-center">
+                      <span>Permissions:</span>
+                      <span className="text-cyan-400 font-sans text-[11px] bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-800/40">
+                        Spot Trade, Account Read
                       </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 ${
-                      ex.status === "CONNECTED" 
-                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" 
-                        : "bg-rose-500/10 text-rose-400 border border-rose-500/30"
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${ex.status === "CONNECTED" ? "bg-emerald-400" : "bg-rose-400"}`} />
-                      {ex.status || "DISCONNECTED"}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => handleOpenUpdate(ex)}
-                        className="p-1 text-slate-500 hover:text-cyan-400 transition-colors"
-                        title="Update Keys / Re-authenticate"
-                      >
-                        <RefreshCw className="w-4 h-4" />
-                      </button>
-                      {onDeleteExchange && (
+
+                  {/* Test Connection Button & Status Banner */}
+                  {isGate && (
+                    <div className="mt-3 pt-3 border-t border-slate-800/80 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-slate-400">Live API Health Check</span>
                         <button
-                          onClick={() => onDeleteExchange(ex.id)}
-                          className="p-1 text-slate-500 hover:text-rose-400 transition-colors"
-                          title="Disconnect Exchange"
+                          type="button"
+                          disabled={isTesting}
+                          onClick={() => handleTestConnection(ex)}
+                          className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-300 font-semibold text-[11px] rounded border border-slate-700 flex items-center gap-1.5 transition-all disabled:opacity-50"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          {isTesting ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3 text-cyan-400" />}
+                          {isTesting ? "Testing..." : "Test Connection"}
                         </button>
+                      </div>
+
+                      {testResult && (
+                        <div className={`p-2.5 rounded text-xs flex items-start gap-2 border ${
+                          testResult.success 
+                            ? "bg-emerald-950/40 border-emerald-800/50 text-emerald-200" 
+                            : "bg-rose-950/40 border-rose-800/50 text-rose-200"
+                        }`}>
+                          {testResult.success ? (
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          ) : (
+                            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                          )}
+                          <div className="space-y-0.5">
+                            <div className="font-semibold text-[11px]">
+                              {testResult.success ? "Connection Verified" : `Verification Failed (${testResult.code || "403"})`}
+                            </div>
+                            <div className="text-[11px] opacity-90 leading-tight">{testResult.message}</div>
+                          </div>
+                        </div>
                       )}
                     </div>
-                  </div>
+                  )}
+
+                  {ex.lastError && !testResult && (
+                    <div className="mt-3 bg-rose-950/40 border border-rose-800/40 p-2 rounded text-xs text-rose-300 flex items-start gap-1.5">
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      <span>{ex.lastError}</span>
+                    </div>
+                  )}
                 </div>
 
-                <div className="space-y-2 text-xs font-mono text-slate-400">
-                  <div className="flex justify-between bg-slate-950 p-2 rounded border border-slate-800">
-                    <span>API Key:</span>
-                    <span className="text-slate-200">{ex.apiKeyMasked || "••••••••"}</span>
-                  </div>
-                  <div className="flex justify-between bg-slate-950 p-2 rounded border border-slate-800">
-                    <span>Permissions:</span>
-                    <span className="text-cyan-400">{(ex.permissions || []).join(", ") || "None"}</span>
-                  </div>
+                <div className="pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-500">
+                  <span className="flex items-center gap-1">
+                    <Shield className="w-3.5 h-3.5 text-emerald-400" /> Encrypted Vault
+                  </span>
+                  <span>Last Sync: {ex.lastSync ? new Date(ex.lastSync).toLocaleTimeString() : "Never"}</span>
                 </div>
-
-                {ex.lastError && (
-                  <div className="mt-3 bg-rose-950/40 border border-rose-800/40 p-2 rounded text-xs text-rose-300 flex items-start gap-1.5">
-                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                    <span>{ex.lastError}</span>
-                  </div>
-                )}
               </div>
-
-              <div className="pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-500">
-                <span className="flex items-center gap-1">
-                  <Shield className="w-3.5 h-3.5 text-emerald-400" /> Encrypted Vault
-                </span>
-                <span>Last Sync: {ex.lastSync ? new Date(ex.lastSync).toLocaleTimeString() : "Never"}</span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {showAddModal && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-lg max-w-md w-full p-6 space-y-4 shadow-2xl">
+          <div className="bg-slate-900 border border-slate-800 rounded-lg max-w-lg w-full p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
             <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
               {editingExchange ? <RefreshCw className="w-4 h-4 text-cyan-400" /> : <Plus className="w-4 h-4 text-cyan-400" />}
               {editingExchange ? `Update ${editingExchange.exchangeName} Connection` : "Connect New Exchange"}
             </h3>
+
+            {/* Minimum Permissions Notice for Gate.io */}
+            <div className="bg-cyan-950/40 border border-cyan-800/50 p-3.5 rounded-lg text-xs text-cyan-200 space-y-2">
+              <div className="flex items-center justify-between font-semibold text-cyan-300">
+                <span className="flex items-center gap-1.5">
+                  <HelpCircle className="w-4 h-4 text-cyan-400" /> Required Gate.io API Permissions
+                </span>
+                <a 
+                  href="https://www.gate.io/help/api" 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="text-cyan-400 hover:text-cyan-300 flex items-center gap-1 text-[11px] underline"
+                >
+                  Gate.io Docs <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+              <p className="text-[11px] text-slate-300 leading-relaxed">
+                To prevent <span className="text-rose-400 font-mono">403 Forbidden</span> or signature errors, configure your Gate.io API key with exactly these scopes:
+              </p>
+              <div className="grid grid-cols-2 gap-2 pt-1 font-mono text-[11px]">
+                <div className="bg-slate-950 p-2 rounded border border-cyan-900/40 flex items-center gap-1.5 text-cyan-300">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" /> Spot Trade (Enabled)
+                </div>
+                <div className="bg-slate-950 p-2 rounded border border-cyan-900/40 flex items-center gap-1.5 text-cyan-300">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" /> Account Read (Enabled)
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-400 italic">
+                * Note: Do NOT enable Withdrawal permissions. IP Whitelist should be set to unrestricted or configured for your deployment.
+              </div>
+            </div>
             
             {submitError && (
               <div className="bg-rose-950/60 border border-rose-800/80 p-3.5 rounded-lg text-xs text-rose-200 space-y-2">
@@ -218,11 +335,10 @@ export function ExchangeConnections({ exchanges, onAddExchange, onDeleteExchange
                   </div>
                 </div>
 
-                {/* Helpful tips based on common Gate.io setup issues */}
                 <div className="bg-slate-950/60 border border-rose-900/40 rounded p-2.5 text-[11px] text-slate-300 space-y-1">
                   <div className="font-semibold text-rose-300/90">Gate.io API Key Checklist:</div>
                   <ul className="list-disc list-inside space-y-0.5 text-slate-400">
-                    <li>Ensure <span className="text-slate-200">Spot Trade</span> and <span className="text-slate-200">Read</span> permissions are enabled.</li>
+                    <li>Ensure <span className="text-slate-200">Spot Trade</span> and <span className="text-slate-200">Account Read</span> permissions are enabled.</li>
                     <li>If you have <span className="text-slate-200">IP Whitelist</span> configured on Gate.io, allow unrestricted access or add your server IP.</li>
                     <li>Double check that the API Key and Secret are copied completely without extra spaces.</li>
                   </ul>
