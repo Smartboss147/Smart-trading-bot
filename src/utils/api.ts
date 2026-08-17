@@ -42,13 +42,9 @@ export async function safeFetchJson<T = any>(
       }
     }
     
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 seconds timeout
-
-    const fetchOptions: RequestInit = {
+    const baseFetchOptions: RequestInit = {
       ...options,
       credentials: "include", // Required for AI Studio authentication proxy
-      signal: controller.signal,
       headers: {
         'Accept': 'application/json',
         ...(isPostOrPut ? { 'Content-Type': 'application/json' } : {}),
@@ -61,23 +57,27 @@ export async function safeFetchJson<T = any>(
     let res: Response;
     let attempts = 0;
     const maxAttempts = 2;
-    try {
-      while (true) {
-        try {
-          attempts++;
-          res = await fetch(fullUrl, fetchOptions);
-          break;
-        } catch (fetchErr: any) {
-          if (attempts >= maxAttempts) {
-            console.error(`[API] Native fetch failed for ${fullUrl} after ${attempts} attempts:`, fetchErr.name, fetchErr.message);
-            throw fetchErr;
-          }
-          console.warn(`[API] Transient fetch failure for ${fullUrl} (attempt ${attempts}), retrying in 500ms...`);
-          await new Promise(r => setTimeout(r, 500));
+
+    while (true) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 seconds timeout
+      try {
+        attempts++;
+        res = await fetch(fullUrl, {
+          ...baseFetchOptions,
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        break;
+      } catch (fetchErr: any) {
+        clearTimeout(timeoutId);
+        if (attempts >= maxAttempts) {
+          console.error(`[API] Native fetch failed for ${fullUrl} after ${attempts} attempts:`, fetchErr.name, fetchErr.message);
+          throw fetchErr;
         }
+        console.warn(`[API] Transient fetch failure for ${fullUrl} (attempt ${attempts}): ${fetchErr.message}, retrying in 500ms...`);
+        await new Promise(r => setTimeout(r, 500));
       }
-    } finally {
-      clearTimeout(timeoutId);
     }
     
     console.log(`[API] Response ${fullUrl}: ${res.status}`);
@@ -124,10 +124,7 @@ export async function safeFetchJson<T = any>(
       const isTimeout = res.status === 504 || (res.status === 401 && errorMsg.toLowerCase().includes("timeout"));
       
       if (isGenericError || isTimeout) {
-        // If it's generic AND it doesn't look like we have a real payload from the exchange
-        if (!jsonBody?.error || jsonBody.error === "A server error has occurred") {
-          errorMsg = "The connection failed due to a server timeout or temporary network error. Please verify your API keys and try again in a few moments.";
-        }
+        errorMsg = "The connection failed due to a server timeout or temporary network error. Please verify your API keys and try again in a few moments.";
       }
       
       return { ok: false, status: res.status, data: jsonBody, error: errorMsg };
